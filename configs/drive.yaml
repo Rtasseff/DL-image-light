@@ -1,0 +1,95 @@
+# DRIVE dataset configuration for retinal vessel segmentation
+project_name: "drive_vessel_segmentation"
+task: "segmentation"
+
+# Dataset configuration
+dataset:
+  name: "DRIVE"
+  images_dir: "./data/drive/training/images"
+  masks_dir: "./data/drive/training/1st_manual"
+  image_suffix: ".tif"
+  mask_suffix: ".gif"
+  split:
+    type: "random"
+    val_ratio: 0.2
+    seed: 42
+
+# Model configuration
+model:
+  architecture: "Unet"
+  encoder: "resnet34"
+  encoder_weights: "imagenet"
+  in_channels: 3
+  classes: 1
+
+# Training configuration
+training:
+  epochs: 50
+  batch_size: 4  # Smaller batch size for M1 MacBook
+  learning_rate: 1e-4
+  optimizer: "adamw"
+  weight_decay: 1e-4
+  scheduler:
+    type: "cosine"
+    min_lr: 1e-6
+  loss:
+    type: "dice"
+    params:
+      smooth: 1.0
+  metrics:
+    - "dice"
+    - "iou"
+    - "precision"
+    - "recall"
+  accumulate_grad_batches: 2  # Effective batch size of 8
+
+# Augmentations
+augmentations:
+  train:
+    - name: "Resize"
+      params:
+        height: 512
+        width: 512
+    - name: "RandomRotate90"
+      params:
+        p: 0.5
+    - name: "HorizontalFlip"
+      params:
+        p: 0.5
+    - name: "RandomBrightnessContrast"
+      params:
+        brightness_limit: 0.2
+        contrast_limit: 0.2
+        p: 0.5
+    - name: "GaussNoise"
+      params:
+        var_limit: [0, 0.01]
+        p: 0.3
+  val:
+    - name: "Resize"
+      params:
+        height: 512
+        width: 512
+
+# Output configuration
+output:
+  dir: "./runs"
+  save_overlays: true
+  save_predictions: true
+  checkpoint:
+    monitor: "val/loss"
+    mode: "min"
+    save_best_only: true
+
+# Compute settings
+compute:
+  accelerator: "mps"  # Use Apple Silicon GPU
+  devices: 1
+  precision: 32
+  deterministic: true
+  seed: 42
+
+# Logging
+logging:
+  level: "INFO"
+  save_tensorboard: false
