@@ -30,9 +30,24 @@ ENV/
 env.bak/
 venv.bak/
 
-# PyTorch
+# PyTorch & ML models
 *.pth
 *.pt
+*.ckpt
+*.safetensors
+
+# Testing & Coverage
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.pytest_cache/
+.cache/
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -41,15 +56,22 @@ venv.bak/
 profile_default/
 ipython_config.py
 
-# Experiment outputs
+# Experiment outputs (ML-specific)
 runs/
 outputs/
 checkpoints/
+artifacts/
+logs/
+wandb/
+mlruns/
+lightning_logs/
 *.log
 
 # Data directories
 data/
 datasets/
+*.csv
+*.parquet
 
 # IDE
 .vscode/
@@ -60,6 +82,11 @@ datasets/
 
 # OS
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
 
 # Environment variables
@@ -69,6 +96,9 @@ Thumbs.db
 
 # Temporary files
 *.tmp
-*.temp.coverage
-__pycache__/
-*.pyc
+*.temp
+*~
+
+# Documentation builds
+docs/_build/
+site/
