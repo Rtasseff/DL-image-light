@@ -1,219 +1,481 @@
 # Image Segmentation Platform — Software Design Document
-*Version:* 2.0  
-*Date:* 2025-01-15
+*Version:* 3.0  
+*Date:* 2025-01-15  
+*Status:* Living Document - Updated with Implementation Lessons
 
 ## Executive Summary
-Build a **focused, production-ready** segmentation platform using **proven libraries** (SMP, PyTorch Lightning) while maintaining clean interfaces for future extensibility. Start with segmentation only, clear path to classification and multimodal later.
+Build a **production-ready** segmentation platform using **proven libraries** with **robust fallback strategies** for dependency management and testing. Based on real implementation experience through Week 2 MVP.
 
-**Key Changes from v1.0:**
-- Focus on segmentation only (classification deferred)
-- Leverage SMP + PyTorch Lightning instead of hand-rolling
-- Start with single train/val split (k-fold as immediate next step)
-- Strong emphasis on documentation and code clarity
+**Key Updates in v3.0:**
+- Comprehensive dependency management with fallback implementations
+- Three-tier testing strategy for development without heavy dependencies  
+- Detailed visualization specifications
+- Resource management and memory limits
+- Refined timeline based on actual implementation
+- Implementation guidance from lessons learned
 
 ## 1. Purpose & Scope
 
-### Current Scope (MVP)
-- **Task:** Semantic segmentation only
-- **Models:** U-Net/U-Net++/DeepLabV3+ via Segmentation Models PyTorch (SMP)
+### Current Scope (MVP - Completed Week 2)
+- **Task:** Semantic segmentation
+- **Models:** U-Net/U-Net++/DeepLabV3+ via SMP with fallbacks
 - **Data:** Local PNG/JPEG images with mask labels
 - **Validation:** Single train/val split with fixed seed
 - **Target:** DRIVE dataset (retinal vessel segmentation)
-- **Platform:** M1 MacBook (CPU), with CUDA support ready
+- **Platform:** M1 MacBook (CPU/MPS), Linux + CUDA ready
 
-### Immediate Next Phase (v2.1)
-- **5-fold cross-validation** (implementation approach documented below)
-- **Additional backbones** via timm integration
-- **TTA inference** (horizontal flip initially)
+### Immediate Next Phase (v3.1)
+- **5-fold cross-validation** with robust error handling
+- **Test-time augmentation** with memory management
+- **Sliding window inference** for large images
+- **Enhanced reporting** with interactive HTML
 
-### Future Scope (v3+)
-- Classification tasks (see Section 22)
+### Future Scope (v4+)
+- Classification tasks with same infrastructure
 - MONAI integration for medical imaging
-- Multimodal (image + tabular) 
+- Multimodal (image + tabular) fusion
 
 ## 2. Core Technical Stack
 
-### Foundation Libraries
-- **PyTorch**: Core deep learning framework
-- **PyTorch Lightning**: Training orchestration, eliminates boilerplate
-- **Segmentation Models PyTorch (SMP)**: Pre-built architectures
-- **TorchMetrics**: Standardized metric computation
-- **Albumentations**: 2D augmentations
-- **timm**: Encoder backbones
+### Dependency Strategy
 
-### Infrastructure
-- **Python 3.11+**
-- **venv** for environment management  
-- **Git** for version control
-- **SQLite** for lightweight metadata tracking
-- **YAML** for configuration
-- **Docker** ready (future)
+```yaml
+dependencies:
+  # Core Minimal (Always Required)
+  core:
+    - torch: ">=2.0.0,<3.0.0"
+    - numpy: ">=1.20.0"
+    - pyyaml: ">=6.0"
+    - pydantic: ">=2.0.0"
+    - pillow: ">=9.0.0"
+    - tqdm: ">=4.60.0"
+    
+  # ML Performance (Full Functionality)
+  ml_required:
+    - pytorch-lightning: ">=2.0.0,<3.0.0"
+    - segmentation-models-pytorch: ">=0.3.0"
+    
+  ml_optional:
+    - torchmetrics: ">=1.0.0"  # Fallback: simple numpy metrics
+    - albumentations: ">=1.3.0"  # Fallback: torchvision transforms
+    - timm: ">=0.9.0"  # Fallback: torchvision models
+    
+  # Visualization (Reporting)
+  visualization:
+    - matplotlib: ">=3.5.0"
+    - seaborn: ">=0.12.0"  # Optional: enhanced plots
+    - jinja2: ">=3.0.0"  # Optional: HTML reports
+    
+  # Development (Testing/Linting)
+  development:
+    - pytest: ">=7.0.0"
+    - pytest-cov: ">=4.0.0"
+    - black: ">=23.0.0"
+    - isort: ">=5.0.0"
+    - mypy: ">=1.0.0"
+```
 
-### Future Additions
-- **MONAI**: Medical I/O, 3D transforms, sliding window inference
-- **TorchIO**: 3D medical augmentations
-- **MLflow/W&B**: Experiment tracking (optional layer)
+### Fallback Implementation Strategy
+
+```python
+# Required structure for all optional dependencies
+# src/core/dependencies.py
+
+import importlib.util
+import warnings
+from typing import Dict, Any
+
+class DependencyManager:
+    """Manages optional dependencies with fallbacks."""
+    
+    @staticmethod
+    def check_dependencies() -> Dict[str, bool]:
+        """Check which optional dependencies are available."""
+        deps = {}
+        deps['torchmetrics'] = importlib.util.find_spec("torchmetrics") is not None
+        deps['albumentations'] = importlib.util.find_spec("albumentations") is not None
+        deps['timm'] = importlib.util.find_spec("timm") is not None
+        deps['seaborn'] = importlib.util.find_spec("seaborn") is not None
+        return deps
+    
+    @staticmethod
+    def warn_missing(package: str, fallback: str):
+        """Issue warning about missing package."""
+        warnings.warn(
+            f"{package} not available, using {fallback}. "
+            f"Install with: pip install {package}",
+            UserWarning
+        )
+
+# Example usage in metrics module
+# src/metrics/__init__.py
+
+from .dependencies import DependencyManager
+
+dm = DependencyManager()
+deps = dm.check_dependencies()
+
+if deps['torchmetrics']:
+    from torchmetrics import Dice, JaccardIndex, Precision, Recall
+else:
+    dm.warn_missing('torchmetrics', 'simple numpy implementations')
+    from .simple import SimpleDice as Dice
+    from .simple import SimpleIoU as JaccardIndex
+    from .simple import SimplePrecision as Precision
+    from .simple import SimpleRecall as Recall
+```
 
 ## 3. Architecture: Five Stable Interfaces
 
-The platform is built around **5 minimal, stable contracts** that allow component swapping without rippling changes:
+### API Stability Contract
+These interfaces remain stable through v4.0:
 
 ### 3.1 DataModule Contract
 ```python
+from typing import Protocol, Optional
+from torch.utils.data import DataLoader
+
 class DataModule(Protocol):
-    """Owns data loading, splits, transforms"""
-    def setup(self, stage: str) -> None: ...
-    def train_dataloader(self) -> DataLoader: ...
-    def val_dataloader(self) -> DataLoader: ...
-    def test_dataloader(self) -> Optional[DataLoader]: ...
+    """
+    Stable API v3.0 - v4.0
+    Owns data loading, splits, transforms, and memory management.
+    """
+    
+    def setup(self, stage: str) -> None: 
+        """Setup data for train/val/test."""
+        ...
+    
+    def train_dataloader(self) -> DataLoader: 
+        """Return training dataloader with auto batch size."""
+        ...
+    
+    def val_dataloader(self) -> DataLoader: 
+        """Return validation dataloader."""
+        ...
+    
+    def test_dataloader(self) -> Optional[DataLoader]: 
+        """Return test dataloader if available."""
+        ...
+    
+    def auto_adjust_batch_size(self, available_memory_mb: int) -> None:
+        """Adjust batch size based on available memory."""
+        ...
 ```
 
-### 3.2 Model Contract  
+### 3.2 Model Contract
 ```python
 class Model(nn.Module):
-    """Pure PyTorch model"""
-    def forward(self, x: Tensor) -> Tensor: ...
-    def predict_step(self, x: Tensor) -> Tensor:
-        """Optional: for sliding window or TTA"""
-        return self.forward(x)
+    """
+    Stable API v3.0 - v4.0
+    Pure PyTorch model with optional prediction strategies.
+    """
+    
+    def forward(self, x: Tensor) -> Tensor: 
+        """Standard forward pass."""
+        ...
+    
+    def predict_step(self, x: Tensor, strategy: str = "standard") -> Tensor:
+        """
+        Prediction with different strategies.
+        Args:
+            x: Input tensor
+            strategy: "standard", "tta", "sliding_window"
+        """
+        if strategy == "standard":
+            return self.forward(x)
+        elif strategy == "tta":
+            return self._predict_with_tta(x)
+        elif strategy == "sliding_window":
+            return self._predict_sliding_window(x)
 ```
 
 ### 3.3 Loss Contract
 ```python
 class Loss(Protocol):
-    """Any callable loss function"""
-    def __call__(self, pred: Tensor, target: Tensor, **kwargs) -> Tensor: ...
+    """Stable API v3.0 - v4.0"""
+    
+    def __call__(
+        self, 
+        pred: Tensor, 
+        target: Tensor, 
+        **kwargs: Any
+    ) -> Tensor: 
+        """Compute loss with optional sample weights."""
+        ...
 ```
 
 ### 3.4 Metrics Contract
 ```python
 class Metrics(Protocol):
-    """TorchMetrics-compatible"""
-    def update(self, pred: Tensor, target: Tensor) -> None: ...
-    def compute(self) -> Dict[str, Tensor]: ...
-    def reset(self) -> None: ...
+    """Stable API v3.0 - v4.0"""
+    
+    def update(self, pred: Tensor, target: Tensor) -> None: 
+        """Update metric state."""
+        ...
+    
+    def compute(self) -> Dict[str, Tensor]: 
+        """Compute final metric values."""
+        ...
+    
+    def reset(self) -> None: 
+        """Reset metric state."""
+        ...
 ```
 
 ### 3.5 Trainer Contract
 ```python
 class Trainer(Protocol):
-    """Lightning trainer or compatible"""
-    def fit(self, model, datamodule, callbacks=None) -> None: ...
-    def validate(self, model, datamodule) -> List[Dict]: ...
-    def test(self, model, datamodule) -> List[Dict]: ...
+    """Stable API v3.0 - v4.0"""
+    
+    def fit(
+        self, 
+        model: Model, 
+        datamodule: DataModule, 
+        callbacks: Optional[List] = None
+    ) -> None: 
+        """Train model."""
+        ...
+    
+    def validate(
+        self, 
+        model: Model, 
+        datamodule: DataModule
+    ) -> List[Dict]: 
+        """Validate model."""
+        ...
+    
+    def test(
+        self, 
+        model: Model, 
+        datamodule: DataModule
+    ) -> List[Dict]: 
+        """Test model."""
+        ...
 ```
 
-**These interfaces remain stable** when switching between tasks, models, or datasets.
+## 4. Configuration Schema with Validation
 
-## 4. Configuration Schema
+### Configuration Validation Strategy
 
-### MVP Configuration (Single Split)
+```python
+# src/core/config.py
+
+from enum import Enum
+from typing import Dict, Any, Optional
+from pydantic import BaseModel, Field, validator
+import warnings
+
+class ValidationMode(str, Enum):
+    """Configuration validation modes."""
+    STRICT = "strict"        # Production - all fields required
+    PERMISSIVE = "permissive"  # Development - allows extras
+    MINIMAL = "minimal"      # Testing - only essentials
+
+class ConfigValidator:
+    """Multi-mode configuration validation."""
+    
+    @classmethod
+    def validate(
+        cls, 
+        config: Dict[str, Any], 
+        mode: ValidationMode = ValidationMode.STRICT
+    ) -> Dict[str, Any]:
+        """
+        Validate configuration based on mode.
+        
+        Args:
+            config: Raw configuration dictionary
+            mode: Validation strictness level
+            
+        Returns:
+            Validated configuration
+            
+        Raises:
+            ValidationError: In STRICT mode if config invalid
+        """
+        if mode == ValidationMode.MINIMAL:
+            # Only validate essential fields
+            required_fields = [
+                "model.architecture",
+                "dataset.images_dir",
+                "dataset.masks_dir"
+            ]
+            for field in required_fields:
+                if not cls._has_nested_key(config, field):
+                    raise ValueError(f"Missing required field: {field}")
+                    
+        elif mode == ValidationMode.PERMISSIVE:
+            # Validate known fields, warn on unknown
+            validated = cls._validate_schema(config, warn_extra=True)
+            return validated
+            
+        else:  # STRICT
+            # Full validation, no unknown fields
+            validated = cls._validate_schema(config, warn_extra=False)
+            return validated
+        
+        return config
+```
+
+### Configuration Schema
 ```yaml
-# config.yaml - Exhaustively commented
-project_name: "drive_vessel_segmentation"
-task: "segmentation"  # Future: "classification" | "multimodal"
+# config.yaml with validation annotations
+
+# Project metadata
+project_name: "drive_vessel_segmentation"  # Required in STRICT
+task: "segmentation"  # Required, enum: ["segmentation", "classification"]
+validation_mode: "permissive"  # For development
 
 # Dataset configuration
 dataset:
-  name: "DRIVE"
-  images_dir: "./data/drive/images"
-  masks_dir: "./data/drive/masks"  
-  # For classification: labels_file: "./labels.csv"
+  name: "DRIVE"  # Required
+  images_dir: "./data/drive/images"  # Required
+  masks_dir: "./data/drive/masks"  # Required for segmentation
   
-  # Image file pattern
-  image_suffix: ".png"
-  mask_suffix: "_mask.png"
+  # Optional with defaults
+  image_suffix: ".png"  # Default: ".png"
+  mask_suffix: "_mask.png"  # Default: "_mask.png"
   
-  # Train/val split  
+  # Memory management
+  cache_in_memory: false  # Default: false
+  max_cache_size_mb: 1000  # Default: 1000
+  
+  # Train/val split
   split:
-    type: "random"  # Future: "stratified", "group"
-    val_ratio: 0.2
-    seed: 42
+    type: "random"  # enum: ["random", "stratified", "group"]
+    val_ratio: 0.2  # Required if type="random"
+    seed: 42  # Required
 
 # Model configuration  
 model:
-  architecture: "Unet"  # Options: "Unet", "UnetPlusPlus", "DeepLabV3Plus"
-  encoder: "resnet34"   # Any timm encoder
-  encoder_weights: "imagenet"
-  in_channels: 3
-  classes: 1  # Binary segmentation
+  architecture: "Unet"  # Required, enum: ["Unet", "UnetPlusPlus", "DeepLabV3Plus"]
+  encoder: "resnet34"  # Required
+  encoder_weights: "imagenet"  # Optional, default: "imagenet"
+  
+  # Architecture specific
+  in_channels: 3  # Default: 3
+  classes: 1  # Default: 1 for binary
+  
+  # Fallback for missing SMP
+  use_simple_unet: false  # Use basic implementation if SMP unavailable
 
 # Training configuration
 training:
-  epochs: 50
-  batch_size: 8
-  learning_rate: 1e-4
-  optimizer: "adamw"
-  scheduler:
-    type: "cosine"
-    min_lr: 1e-6
+  epochs: 50  # Required
+  batch_size: 8  # Required, auto-adjusted based on memory
+  learning_rate: 1e-4  # Required
+  
+  # Optional with defaults
+  optimizer: "adamw"  # Default: "adamw"
+  weight_decay: 1e-4  # Default: 1e-4
+  
+  # Early stopping
+  early_stopping:
+    enabled: true  # Default: true
+    monitor: "val_loss"  # Default: "val_loss"
+    patience: 10  # Default: 10
+    mode: "min"  # Default: "min"
   
   # Loss function
   loss:
-    type: "dice"  # Options: "dice", "tversky", "bce", "focal"
-    params:
+    type: "dice"  # Required, enum: ["dice", "tversky", "bce", "focal", "compound"]
+    params:  # Type-specific parameters
       smooth: 1.0
+      # For tversky: alpha, beta
+      # For focal: alpha, gamma
   
   # Metrics to track
-  metrics:
+  metrics:  # Default: ["dice"]
     - "dice"
-    - "iou" 
+    - "iou"
     - "precision"
     - "recall"
 
-# Augmentations (Albumentations format)
+# Resource management
+resources:
+  memory:
+    max_batch_size_4gb: 4  # Auto batch size limits
+    max_batch_size_8gb: 8
+    max_batch_size_16gb: 16
+    warn_threshold: 0.8  # Warn at 80% memory usage
+    fail_threshold: 0.95  # Fail at 95% memory usage
+    
+  inference:
+    tile_size: [512, 512]  # For large images
+    tile_overlap: 64  # Pixels
+    batch_processing: true
+    max_batch_size: 4  # For inference
+
+# Augmentations
 augmentations:
+  backend: "auto"  # "albumentations", "torchvision", "auto"
   train:
     - name: "RandomRotate90"
       params: {p: 0.5}
     - name: "HorizontalFlip"
       params: {p: 0.5}
-    - name: "RandomBrightnessContrast"
-      params: {brightness_limit: 0.2, contrast_limit: 0.2, p: 0.5}
   val: []  # No augmentation for validation
 
-# Inference settings
-inference:
-  mode: "standard"  # Future: "tta", "sliding_window"
-  # tta:
-  #   transforms: ["hflip"]  # Future: ["hflip", "vflip", "rot90"]
-  # sliding_window:
-  #   window_size: [256, 256]
-  #   overlap: 0.5
+# Visualization specifications
+visualization:
+  overlays:
+    enabled: true
+    colormap: "viridis"  # matplotlib colormap
+    alpha: 0.3  # Transparency
+    dpi: 150  # Output resolution
+    formats: ["png"]  # Output formats
+    
+  error_analysis:
+    enabled: false  # Set true for detailed error maps
+    colors:
+      true_positive: [0, 255, 0, 128]  # Green
+      false_positive: [255, 0, 0, 128]  # Red  
+      false_negative: [0, 0, 255, 128]  # Blue
+      
+  metrics_plots:
+    enabled: true
+    figure_size: [10, 6]
+    style: "seaborn"  # If available
+    save_format: "svg"
 
 # Output configuration
 output:
-  dir: "./runs"
+  dir: "./runs"  # Required
+  experiment_name: null  # Auto-generated if null
+  save_predictions: false  # Save raw predictions (disk intensive)
   save_overlays: true
-  save_predictions: true
   checkpoint:
     monitor: "val_loss"
     mode: "min"
     save_best_only: true
+    save_last: true  # Always keep last checkpoint
 
 # Compute settings
 compute:
-  accelerator: "auto"  # "cpu", "gpu", "mps", "auto"
+  accelerator: "auto"  # "cpu", "cuda", "mps", "auto"
   devices: 1
-  precision: 32  # 16 for mixed precision
-  deterministic: true
+  precision: 32  # 16 for mixed precision (if supported)
+  deterministic: true  # Reproducibility
   seed: 42
+  
+  # Platform specific
+  cuda:
+    cudnn_benchmark: false  # For reproducibility
+    amp_backend: "native"
+  mps:
+    fallback_to_cpu: true  # If operation unsupported
 
 # Logging
 logging:
-  level: "INFO"
-  save_tensorboard: false  # Future: true
-```
-
-### Future: K-Fold Configuration Addition
-```yaml
-# Additional section for k-fold CV (v2.1)
-cross_validation:
-  enabled: true
-  folds: 5
-  stratify: true  # For classification
-  group_by: "patient_id"  # For medical data
-  seed: 42
+  level: "INFO"  # "DEBUG", "INFO", "WARNING", "ERROR"
+  console: true
+  file: true
+  tensorboard: false  # Requires tensorboard
+  
+  # Detailed logging
+  log_gradients: false
+  log_memory: true
+  log_timing: true
 ```
 
 ## 5. Repository Structure
@@ -223,1301 +485,1305 @@ segmentation-platform/
 ├── src/
 │   ├── core/
 │   │   ├── __init__.py
-│   │   ├── config.py          # Config validation with Pydantic
-│   │   ├── trainer.py         # Lightning trainer wrapper
-│   │   └── registry.py        # Component registry
+│   │   ├── config.py           # Config validation with modes
+│   │   ├── dependencies.py     # Dependency checking & fallbacks
+│   │   ├── trainer.py          # Lightning trainer wrapper
+│   │   ├── registry.py         # Component registry
+│   │   └── errors.py           # Custom exceptions with helpful messages
 │   │
 │   ├── data/
 │   │   ├── __init__.py
-│   │   ├── datamodule.py      # Lightning DataModule
-│   │   ├── dataset.py         # PyTorch Dataset
-│   │   ├── transforms.py      # Augmentation builders
-│   │   └── readers/           # Future: DICOM, NIfTI readers
+│   │   ├── datamodule.py       # DataModule with auto batch sizing
+│   │   ├── dataset.py          # Dataset with caching options
+│   │   ├── transforms.py       # Transform builders with fallbacks
+│   │   ├── memory.py           # Memory management utilities
+│   │   └── readers/            # Extensible readers
+│   │       ├── base.py
+│   │       └── image.py
 │   │
 │   ├── models/
 │   │   ├── __init__.py
-│   │   ├── segmentation.py    # SMP model wrapper
-│   │   ├── lightning_module.py # LightningModule implementation
-│   │   └── architectures/     # Future: custom architectures
+│   │   ├── segmentation.py     # SMP wrapper with fallback
+│   │   ├── simple_unet.py      # Fallback UNet implementation
+│   │   ├── lightning_module.py # LightningModule
+│   │   └── architectures/      # Future custom architectures
 │   │
 │   ├── losses/
 │   │   ├── __init__.py
-│   │   ├── dice.py            # Dice loss variants
-│   │   ├── tversky.py         # Tversky loss
-│   │   └── compound.py        # Combined losses
+│   │   ├── factory.py          # Loss factory with validation
+│   │   ├── dice.py             # Dice variants
+│   │   ├── tversky.py          # Tversky loss
+│   │   ├── focal.py            # Focal loss
+│   │   └── compound.py         # Combined losses
 │   │
 │   ├── metrics/
 │   │   ├── __init__.py
-│   │   └── segmentation.py    # TorchMetrics wrappers
+│   │   ├── factory.py          # Metric factory
+│   │   ├── torchmetrics_impl.py # TorchMetrics wrappers
+│   │   └── simple.py           # Numpy fallback implementations
 │   │
 │   ├── inference/
 │   │   ├── __init__.py
-│   │   ├── predict.py         # Single image/batch prediction
-│   │   ├── tta.py             # Test-time augmentation
-│   │   └── sliding_window.py  # Future: sliding window
+│   │   ├── predict.py          # Standard prediction
+│   │   ├── tta.py              # Test-time augmentation
+│   │   ├── sliding_window.py   # Sliding window for large images
+│   │   └── memory_manager.py   # Memory-aware inference
 │   │
 │   ├── visualization/
 │   │   ├── __init__.py
-│   │   ├── overlays.py        # Mask overlays
-│   │   └── metrics_plot.py    # Training curves
+│   │   ├── overlays.py         # Configurable overlays
+│   │   ├── error_maps.py       # Error analysis visualizations
+│   │   ├── metrics_plot.py     # Training curves with fallbacks
+│   │   └── html_report.py      # Interactive HTML reports
 │   │
-│   └── utils/
+│   ├── utils/
+│   │   ├── __init__.py
+│   │   ├── io.py               # Robust file I/O
+│   │   ├── logging.py          # Multi-level logging
+│   │   ├── reproducibility.py  # Seed management
+│   │   ├── memory.py           # Memory monitoring
+│   │   └── platform.py         # Platform detection & optimization
+│   │
+│   └── testing/
 │       ├── __init__.py
-│       ├── io.py              # File I/O helpers
-│       ├── logging.py         # Logging setup
-│       └── reproducibility.py # Seed management
+│       └── fixtures.py         # Shared test fixtures
 │
 ├── configs/
-│   ├── base_config.yaml       # Default configuration
-│   ├── drive.yaml             # DRIVE dataset specific
-│   └── examples/              # Example configs
+│   ├── base_config.yaml        # Default configuration
+│   ├── drive.yaml              # DRIVE dataset specific
+│   ├── test_minimal.yaml       # Minimal config for testing
+│   └── examples/
+│       ├── low_memory.yaml    # Settings for 4GB systems
+│       ├── high_quality.yaml  # Maximum quality settings
+│       └── fast_training.yaml # Speed optimized settings
 │
 ├── scripts/
-│   ├── train.py               # Main training script
-│   ├── predict.py             # Inference script
-│   ├── evaluate.py            # Evaluation script
-│   └── visualize_results.py   # Results visualization
+│   ├── train.py                # Main training script with error handling
+│   ├── predict.py              # Inference with multiple strategies
+│   ├── evaluate.py             # Comprehensive evaluation
+│   ├── visualize_results.py    # Generate all visualizations
+│   └── check_dependencies.py   # Dependency diagnostic tool
 │
 ├── tests/
-│   ├── unit/                  # Unit tests per module
-│   ├── integration/           # End-to-end tests
-│   └── fixtures/              # Test data
+│   ├── unit/                   # No ML dependencies required
+│   │   ├── test_config.py
+│   │   ├── test_io.py
+│   │   └── test_registry.py
+│   │
+│   ├── integration/
+│   │   ├── minimal/           # Core dependencies only
+│   │   │   ├── test_pipeline.py
+│   │   │   └── test_data_loading.py
+│   │   │
+│   │   └── full/              # All dependencies required
+│   │       ├── test_training.py
+│   │       ├── test_augmentations.py
+│   │       └── test_metrics.py
+│   │
+│   └── fixtures/              # Test data and mocks
+│       ├── tiny_dataset/
+│       └── mock_models.py
 │
 ├── runs/                      # Experiment outputs (gitignored)
 │
 ├── docs/
 │   ├── README.md              # Comprehensive documentation
 │   ├── QUICKSTART.md          # 5-minute getting started
-│   ├── CONFIG_GUIDE.md        # Configuration deep dive
+│   ├── CONFIG_GUIDE.md        # All configuration options
 │   ├── ARCHITECTURE.md        # Technical architecture
-│   └── EXTENDING.md           # How to add components
+│   ├── EXTENDING.md           # How to add components
+│   ├── TROUBLESHOOTING.md     # Common issues and solutions
+│   └── IMPLEMENTATION_LESSONS.md  # Living document of lessons learned
 │
-├── requirements.txt           # Pinned dependencies
+├── requirements/
+│   ├── base.txt              # Core dependencies only
+│   ├── ml.txt                # ML dependencies (includes base)
+│   ├── viz.txt               # Visualization (includes base)
+│   ├── dev.txt               # Development tools
+│   └── all.txt               # Everything
+│
 ├── setup.py                   # Package setup
-└── .gitignore
+├── pyproject.toml            # Modern Python project config
+├── .gitignore
+└── Makefile                  # Common commands
 ```
 
-## 6. Documentation Requirements
+## 6. Testing Philosophy
 
-### 6.1 Code Documentation Standards
-**Every module, class, and public method must include:**
+### Three-Tier Testing Strategy
 
 ```python
-class SegmentationDataModule(LightningDataModule):
-    """
-    PyTorch Lightning DataModule for segmentation tasks.
-    
-    This class handles all data-related operations including loading,
-    splitting, transformation, and batching. It ensures reproducible
-    data splits and consistent preprocessing across training phases.
-    
-    Args:
-        config (Dict): Configuration dictionary containing:
-            - dataset.images_dir: Path to images directory
-            - dataset.masks_dir: Path to masks directory
-            - dataset.split: Split configuration
-            - augmentations: Augmentation configurations
-            - training.batch_size: Batch size for dataloaders
-        
-    Example:
-        >>> config = load_config("configs/drive.yaml")
-        >>> dm = SegmentationDataModule(config)
-        >>> dm.setup("fit")
-        >>> train_loader = dm.train_dataloader()
-    
-    Note:
-        The DataModule maintains separate transforms for train/val/test
-        to ensure proper augmentation strategies per phase.
-    """
+# tests/conftest.py
+"""Pytest configuration with dependency detection."""
+
+import pytest
+import sys
+from pathlib import Path
+
+# Add src to path
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+
+from core.dependencies import DependencyManager
+
+# Detect available dependencies
+deps = DependencyManager().check_dependencies()
+
+# Markers for different test levels
+pytest.mark.unit = pytest.mark.unit  # No external deps
+pytest.mark.integration_minimal = pytest.mark.integration_minimal  # Core deps
+pytest.mark.integration_full = pytest.mark.integration_full  # All deps
+
+# Skip decorators based on dependencies
+requires_torchmetrics = pytest.mark.skipif(
+    not deps['torchmetrics'],
+    reason="TorchMetrics not installed"
+)
+
+requires_albumentations = pytest.mark.skipif(
+    not deps['albumentations'],
+    reason="Albumentations not installed"
+)
+
+# Auto-skip full integration tests if missing deps
+def pytest_collection_modifyitems(config, items):
+    """Auto-skip tests based on available dependencies."""
+    for item in items:
+        if "integration_full" in item.keywords:
+            if not all(deps.values()):
+                item.add_marker(pytest.mark.skip(
+                    reason="Full dependencies not available"
+                ))
 ```
 
-### 6.2 README Structure
-The README must include:
+### Test Categories
 
-1. **Quick Start** (5 minutes to first run)
-   - Installation
-   - Download example data
-   - Run training
-   - View results
-
-2. **Detailed Usage**
-   - Configuration system explanation
-   - All CLI commands and options
-   - Input data format requirements
-   - Output structure explanation
-
-3. **Configuration Deep Dive**
-   - Every configuration option explained
-   - Common configuration patterns
-   - Performance tuning guide
-
-4. **Architecture Overview**
-   - Interface contracts
-   - Data flow diagram
-   - Extension points
-
-5. **Extending the Platform**
-   - Adding new models
-   - Adding new losses
-   - Adding new metrics
-   - Adding new data formats
-
-6. **Troubleshooting**
-   - Common issues and solutions
-   - Performance optimization tips
-   - Debug mode usage
-
-### 6.3 Inline Comment Requirements
+#### 1. Unit Tests (No ML Dependencies)
 ```python
-def create_augmentation_pipeline(config: Dict, phase: str) -> A.Compose:
-    """Create Albumentations pipeline from config."""
-    
-    # Early return for validation/test phases - no augmentation needed
-    if phase != "train" or "augmentations" not in config:
-        return A.Compose([A.Normalize()])
-    
-    transforms = []
-    
-    # Build transform list from config
-    # Each transform is specified as {name: str, params: dict}
-    for aug_config in config["augmentations"].get(phase, []):
-        # Dynamically get transform class from Albumentations
-        transform_class = getattr(A, aug_config["name"])
-        
-        # Instantiate with provided parameters
-        # Default probability to 1.0 if not specified
-        params = aug_config.get("params", {})
-        if "p" not in params:
-            params["p"] = 1.0
-            
-        transforms.append(transform_class(**params))
-    
-    # Always end with normalization
-    transforms.append(A.Normalize())
-    
-    return A.Compose(transforms)
+# tests/unit/test_config.py
+"""Test configuration without ML dependencies."""
+
+def test_config_validation_minimal():
+    """Test minimal config validation."""
+    config = {
+        "model": {"architecture": "Unet"},
+        "dataset": {
+            "images_dir": "/path/to/images",
+            "masks_dir": "/path/to/masks"
+        }
+    }
+    validated = ConfigValidator.validate(
+        config, 
+        mode=ValidationMode.MINIMAL
+    )
+    assert validated is not None
+
+def test_config_missing_required():
+    """Test that missing required fields raise errors."""
+    config = {"model": {}}  # Missing architecture
+    with pytest.raises(ValueError, match="Missing required field"):
+        ConfigValidator.validate(config, mode=ValidationMode.MINIMAL)
 ```
 
-## 7. Output Structure
-
-### Single Run Output (MVP)
-```
-runs/
-└── drive_2025-01-15_093045_a3f2b1/
-    ├── config.yaml              # Exact config used
-    ├── environment.json         # Python/package versions
-    ├── 
-    ├── checkpoints/
-    │   └── best.ckpt           # Best model weights
-    │
-    ├── predictions/            # Optional: raw predictions
-    │   ├── val_image_001.npy
-    │   └── ...
-    │
-    ├── overlays/               # Visual overlays
-    │   ├── val_image_001.png
-    │   └── ...
-    │
-    ├── metrics/
-    │   ├── train_metrics.csv   # Epoch-by-epoch metrics
-    │   ├── val_metrics.csv
-    │   └── final_metrics.json  # Final summary
-    │
-    ├── logs/
-    │   ├── train.log           # Detailed training log
-    │   └── tensorboard/        # Future: TB logs
-    │
-    └── report.md               # Human-readable summary
-```
-
-### K-Fold Output Structure (v2.1)
-```
-runs/
-└── drive_kfold_2025-01-20_143022_b4c3d2/
-    ├── config.yaml
-    ├── environment.json
-    ├── 
-    ├── fold_0/
-    │   ├── checkpoints/
-    │   ├── metrics/
-    │   └── overlays/
-    ├── fold_1/
-    │   └── ...
-    ├── fold_2/
-    │   └── ...
-    ├── fold_3/
-    │   └── ...
-    ├── fold_4/
-    │   └── ...
-    │
-    ├── aggregated/
-    │   ├── metrics_summary.json  # Mean ± std across folds
-    │   ├── metrics_per_fold.csv  # Detailed per-fold
-    │   └── statistical_tests.json # Optional: significance tests
-    │
-    └── report.md                 # Includes CV analysis
-```
-
-## 8. CLI Interface
-
-### MVP Commands
-```bash
-# Training
-python scripts/train.py \
-    --config configs/drive.yaml \
-    --name "baseline_experiment" \
-    --gpu 0
-
-# Prediction
-python scripts/predict.py \
-    --checkpoint runs/drive_2025/checkpoints/best.ckpt \
-    --input data/test_images/ \
-    --output predictions/
-
-# Evaluation
-python scripts/evaluate.py \
-    --checkpoint runs/drive_2025/checkpoints/best.ckpt \
-    --test-dir data/test/ \
-    --output eval_results.json
-
-# Visualization
-python scripts/visualize_results.py \
-    --run-dir runs/drive_2025/ \
-    --output visualizations/
-```
-
-### All Scripts Must:
-- Accept `--help` with detailed descriptions
-- Support `--config` for full configuration
-- Allow command-line overrides of config values
-- Log all operations with configurable verbosity
-- Return appropriate exit codes
-
-## 9. Testing Strategy
-
-### Unit Tests (Minimal for MVP)
+#### 2. Integration Tests - Minimal
 ```python
-def test_dice_loss():
-    """Test Dice loss computation."""
+# tests/integration/minimal/test_pipeline.py
+"""Test pipeline with fallback implementations."""
+
+@pytest.mark.integration_minimal
+def test_pipeline_with_simple_metrics():
+    """Test training with simple metric implementations."""
+    # Uses simple numpy metrics instead of TorchMetrics
+    from metrics.simple import SimpleDice
+    
+    metric = SimpleDice()
     pred = torch.sigmoid(torch.randn(2, 1, 32, 32))
     target = torch.randint(0, 2, (2, 1, 32, 32)).float()
-    loss = DiceLoss()(pred, target)
-    assert 0 <= loss <= 1
+    
+    metric.update(pred, target)
+    result = metric.compute()
+    
+    assert 0 <= result <= 1
 ```
 
-### Integration Tests (Priority)
+#### 3. Integration Tests - Full
 ```python
-def test_training_single_epoch():
-    """Test that training runs for one epoch."""
-    config = load_test_config()
-    config["training"]["epochs"] = 1
-    
-    # Use Lightning's fast_dev_run for quick validation
+# tests/integration/full/test_training.py
+"""Test with all dependencies."""
+
+@pytest.mark.integration_full
+@requires_torchmetrics
+def test_full_training_pipeline():
+    """Test complete training with all features."""
+    config = load_test_config("configs/test_minimal.yaml")
     trainer = Trainer(fast_dev_run=True)
     model = create_model(config)
     datamodule = create_datamodule(config)
     
     trainer.fit(model, datamodule)
     
-    # Check outputs exist
     assert Path("runs").exists()
-    assert len(list(Path("runs").glob("*/checkpoints/*.ckpt"))) > 0
 ```
 
-## 10. Implementation Priorities
+### Smoke Test
+```python
+# tests/test_smoke.py
+"""Quick validation that everything works."""
 
-### Week 1: Core Pipeline
-1. **DataModule** with DRIVE dataset
-2. **SMP Model wrapper** with Lightning
-3. **Basic training script**
-4. **Single train/val split**
-5. **Dice loss and metric**
+@pytest.mark.smoke
+def test_smoke(tmp_path):
+    """1 epoch, 2 samples, all components touched."""
+    config = {
+        "model": {"architecture": "Unet", "encoder": "resnet18"},
+        "dataset": {
+            "images_dir": str(tmp_path / "images"),
+            "masks_dir": str(tmp_path / "masks")
+        },
+        "training": {
+            "epochs": 1,
+            "batch_size": 2,
+            "learning_rate": 0.001
+        }
+    }
+    
+    # Create tiny fake dataset
+    create_tiny_dataset(tmp_path)
+    
+    # Should complete in <60 seconds
+    start = time.time()
+    run_training(config)
+    assert time.time() - start < 60
+```
 
-### Week 2: Full MVP
-1. **All losses** (Dice, Tversky, BCE, Focal)
-2. **All metrics** (IoU, Precision, Recall)
-3. **Overlay visualization**
-4. **Comprehensive config system**
-5. **README and documentation**
+## 7. Implementation Timeline (Revised)
 
-### Week 3: Testing and Polish
-1. **Integration tests**
-2. **Performance profiling**
-3. **Code cleanup and comments**
-4. **Example notebooks** (optional)
+### Week 1: Core Pipeline ✅ (Completed)
+- DataModule with basic data loading
+- SMP Model wrapper with fallbacks
+- Basic training script
+- Single train/val split
+- Dice loss and metric
 
-## 11. K-Fold Cross-Validation (Next Immediate Enhancement)
+### Week 2A: Core Components ✅ (Completed)
+- All losses (Dice, Tversky, BCE, Focal)
+- All metrics with fallbacks
+- Basic configuration system
+- Simple overlay visualization
 
-### Implementation Plan
+### Week 2B: Integration ✅ (Completed)
+- Prediction script
+- Evaluation pipeline
+- Results aggregation
+- Basic reporting
+
+### Week 3: Polish & Robustness (Current)
+- Comprehensive error handling
+- Memory management
+- Dependency diagnostics
+- HTML reporting
+- Complete documentation
+- Three-tier testing
+
+### Week 4: K-Fold CV (Next)
+- Cross-validation orchestrator
+- Fold aggregation
+- Statistical analysis
+- Enhanced reporting
+
+## 8. Resource Management
+
+### Memory Management Strategy
+
+```python
+# src/utils/memory.py
+"""Memory management utilities."""
+
+import torch
+import psutil
+import warnings
+from typing import Tuple, Optional
+
+class MemoryManager:
+    """Manages memory for training and inference."""
+    
+    @staticmethod
+    def get_available_memory() -> Tuple[int, int]:
+        """
+        Get available system and GPU memory in MB.
+        
+        Returns:
+            (system_memory_mb, gpu_memory_mb)
+        """
+        # System memory
+        mem = psutil.virtual_memory()
+        system_mb = mem.available // (1024 * 1024)
+        
+        # GPU memory
+        gpu_mb = 0
+        if torch.cuda.is_available():
+            gpu_mb = torch.cuda.get_device_properties(0).total_memory
+            gpu_mb = gpu_mb // (1024 * 1024)
+        elif torch.backends.mps.is_available():
+            # MPS doesn't provide memory info, use heuristic
+            gpu_mb = 8000  # Assume 8GB for M1
+            
+        return system_mb, gpu_mb
+    
+    @staticmethod
+    def suggest_batch_size(
+        model_size: str = "medium",
+        image_size: Tuple[int, int] = (512, 512),
+        available_memory_mb: Optional[int] = None
+    ) -> int:
+        """
+        Suggest batch size based on available memory.
+        
+        Args:
+            model_size: "small", "medium", "large"
+            image_size: (height, width) of images
+            available_memory_mb: Override auto-detection
+            
+        Returns:
+            Suggested batch size
+        """
+        if available_memory_mb is None:
+            system_mb, gpu_mb = MemoryManager.get_available_memory()
+            available_memory_mb = gpu_mb if gpu_mb > 0 else system_mb
+        
+        # Memory usage estimation (rough)
+        pixels = image_size[0] * image_size[1]
+        
+        if model_size == "small":
+            bytes_per_sample = pixels * 4 * 10  # ~10 layers
+        elif model_size == "medium":
+            bytes_per_sample = pixels * 4 * 20  # ~20 layers
+        else:  # large
+            bytes_per_sample = pixels * 4 * 40  # ~40 layers
+            
+        mb_per_sample = bytes_per_sample / (1024 * 1024)
+        
+        # Use 60% of available memory for safety
+        safe_memory = available_memory_mb * 0.6
+        batch_size = int(safe_memory / mb_per_sample)
+        
+        # Clamp to reasonable range
+        batch_size = max(1, min(batch_size, 32))
+        
+        if batch_size < 4:
+            warnings.warn(
+                f"Low memory: batch size {batch_size}. "
+                "Consider reducing image size or using gradient accumulation."
+            )
+        
+        return batch_size
+```
+
+### Resource Limits Configuration
+
+```yaml
+# Resource limits in config
+resources:
+  memory:
+    # Batch size limits by available memory
+    batch_size_limits:
+      2048: 2   # 2GB: batch_size=2
+      4096: 4   # 4GB: batch_size=4
+      8192: 8   # 8GB: batch_size=8
+      16384: 16 # 16GB: batch_size=16
+      32768: 32 # 32GB: batch_size=32
+    
+    # Monitoring thresholds
+    monitor:
+      check_interval: 10  # Check every N batches
+      warn_threshold: 0.8  # Warn at 80% usage
+      fail_threshold: 0.95 # Stop at 95% usage
+      reduce_batch_on_warn: true
+    
+  inference:
+    # Sliding window for large images
+    sliding_window:
+      enabled: "auto"  # auto, true, false
+      window_size: [512, 512]
+      overlap: 64
+      batch_size: 4
+    
+    # Test-time augmentation
+    tta:
+      enabled: false
+      transforms: ["hflip"]  # Start simple
+      reduction: "mean"  # mean, max, gmean
+```
+
+## 9. Visualization Specifications
+
+### Detailed Visualization Requirements
+
+```python
+# src/visualization/specs.py
+"""Visualization specifications and defaults."""
+
+from dataclasses import dataclass
+from typing import List, Tuple, Optional
+import matplotlib.pyplot as plt
+
+@dataclass
+class OverlaySpec:
+    """Specifications for segmentation overlays."""
+    colormap: str = "viridis"
+    alpha: float = 0.3
+    dpi: int = 150
+    formats: List[str] = None
+    error_colors: dict = None
+    
+    def __post_init__(self):
+        if self.formats is None:
+            self.formats = ["png"]
+        if self.error_colors is None:
+            self.error_colors = {
+                'true_positive': [0, 255, 0, 128],   # Green
+                'false_positive': [255, 0, 0, 128],  # Red
+                'false_negative': [0, 0, 255, 128],  # Blue
+                'true_negative': [0, 0, 0, 0]        # Transparent
+            }
+    
+    def validate(self):
+        """Validate specifications."""
+        assert 0 <= self.alpha <= 1, "Alpha must be between 0 and 1"
+        assert self.dpi > 0, "DPI must be positive"
+        assert self.colormap in plt.colormaps(), f"Unknown colormap: {self.colormap}"
+
+@dataclass
+class PlotSpec:
+    """Specifications for metric plots."""
+    figure_size: Tuple[int, int] = (10, 6)
+    style: str = "seaborn"
+    save_format: str = "svg"
+    show_grid: bool = True
+    show_legend: bool = True
+    
+    def apply_style(self):
+        """Apply matplotlib style with fallback."""
+        try:
+            plt.style.use(self.style)
+        except:
+            # Fallback to default if style not available
+            plt.style.use('default')
+
+# Default specifications
+DEFAULT_OVERLAY_SPEC = OverlaySpec()
+DEFAULT_PLOT_SPEC = PlotSpec()
+```
+
+### Visualization Implementation with Fallbacks
+
+```python
+# src/visualization/overlays.py
+"""Overlay generation with configurable options."""
+
+import numpy as np
+from PIL import Image
+import matplotlib.pyplot as plt
+from pathlib import Path
+from typing import Optional
+
+from .specs import OverlaySpec, DEFAULT_OVERLAY_SPEC
+
+class OverlayGenerator:
+    """Generate overlays with specified configuration."""
+    
+    def __init__(self, spec: Optional[OverlaySpec] = None):
+        self.spec = spec or DEFAULT_OVERLAY_SPEC
+        self.spec.validate()
+    
+    def create_overlay(
+        self,
+        image: np.ndarray,
+        mask_true: np.ndarray,
+        mask_pred: np.ndarray,
+        save_path: Optional[Path] = None
+    ) -> np.ndarray:
+        """
+        Create overlay visualization.
+        
+        Args:
+            image: Original image (H, W, C)
+            mask_true: Ground truth mask (H, W)
+            mask_pred: Predicted mask (H, W)
+            save_path: Optional path to save overlay
+            
+        Returns:
+            Overlay image array
+        """
+        # Ensure inputs are numpy arrays
+        image = np.asarray(image)
+        mask_true = np.asarray(mask_true)
+        mask_pred = np.asarray(mask_pred)
+        
+        # Create figure
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        
+        # Original image
+        axes[0].imshow(image)
+        axes[0].set_title("Original")
+        axes[0].axis('off')
+        
+        # Prediction overlay
+        axes[1].imshow(image)
+        axes[1].imshow(
+            mask_pred,
+            alpha=self.spec.alpha,
+            cmap=self.spec.colormap
+        )
+        axes[1].set_title("Prediction")
+        axes[1].axis('off')
+        
+        # Error analysis
+        if self.spec.error_colors:
+            error_map = self._create_error_map(mask_true, mask_pred)
+            axes[2].imshow(image)
+            axes[2].imshow(error_map, alpha=0.5)
+            axes[2].set_title("Error Analysis")
+            axes[2].axis('off')
+        
+        plt.tight_layout()
+        
+        # Save if path provided
+        if save_path:
+            for fmt in self.spec.formats:
+                output_path = save_path.with_suffix(f'.{fmt}')
+                plt.savefig(
+                    output_path,
+                    dpi=self.spec.dpi,
+                    bbox_inches='tight'
+                )
+        
+        # Convert figure to array
+        fig.canvas.draw()
+        overlay_array = np.frombuffer(
+            fig.canvas.tostring_rgb(),
+            dtype=np.uint8
+        )
+        overlay_array = overlay_array.reshape(
+            fig.canvas.get_width_height()[::-1] + (3,)
+        )
+        
+        plt.close(fig)
+        return overlay_array
+    
+    def _create_error_map(
+        self,
+        mask_true: np.ndarray,
+        mask_pred: np.ndarray
+    ) -> np.ndarray:
+        """Create error visualization map."""
+        h, w = mask_true.shape
+        error_map = np.zeros((h, w, 4), dtype=np.uint8)
+        
+        # Calculate error types
+        tp = (mask_true == 1) & (mask_pred == 1)
+        fp = (mask_true == 0) & (mask_pred == 1)
+        fn = (mask_true == 1) & (mask_pred == 0)
+        
+        # Apply colors
+        error_map[tp] = self.spec.error_colors['true_positive']
+        error_map[fp] = self.spec.error_colors['false_positive']
+        error_map[fn] = self.spec.error_colors['false_negative']
+        
+        return error_map
+```
+
+## 10. Error Handling Strategy
+
+### Comprehensive Error Handling
+
+```python
+# src/core/errors.py
+"""Custom exceptions with helpful messages."""
+
+class ConfigurationError(Exception):
+    """Configuration related errors."""
+    
+    def __init__(self, message: str, suggestions: List[str] = None):
+        self.message = message
+        self.suggestions = suggestions or []
+        super().__init__(self._format_message())
+    
+    def _format_message(self) -> str:
+        """Format error message with suggestions."""
+        msg = f"\n❌ Configuration Error: {self.message}"
+        if self.suggestions:
+            msg += "\n\n💡 Suggestions:"
+            for suggestion in self.suggestions:
+                msg += f"\n  • {suggestion}"
+        return msg
+
+class DependencyError(Exception):
+    """Missing or incompatible dependency."""
+    
+    def __init__(self, package: str, required_version: str = None):
+        self.package = package
+        self.required_version = required_version
+        super().__init__(self._format_message())
+    
+    def _format_message(self) -> str:
+        """Format dependency error message."""
+        msg = f"\n❌ Dependency Error: {self.package} not available"
+        if self.required_version:
+            msg += f" (requires {self.required_version})"
+        msg += f"\n\n💡 To install: pip install {self.package}"
+        msg += "\n💡 Or use fallback mode: --use-fallbacks"
+        return msg
+
+class MemoryError(Exception):
+    """Memory related errors."""
+    
+    def __init__(self, required_mb: int, available_mb: int):
+        self.required = required_mb
+        self.available = available_mb
+        super().__init__(self._format_message())
+    
+    def _format_message(self) -> str:
+        """Format memory error message."""
+        msg = f"\n❌ Memory Error: Insufficient memory"
+        msg += f"\n  Required: {self.required}MB"
+        msg += f"\n  Available: {self.available}MB"
+        msg += "\n\n💡 Suggestions:"
+        msg += "\n  • Reduce batch size"
+        msg += "\n  • Enable gradient accumulation"
+        msg += "\n  • Use smaller model"
+        msg += "\n  • Enable CPU offloading"
+        return msg
+```
+
+### Error Handling in Scripts
+
+```python
+# scripts/train.py (error handling section)
+"""Training script with comprehensive error handling."""
+
+import sys
+import traceback
+from pathlib import Path
+
+from src.core.errors import ConfigurationError, DependencyError, MemoryError
+from src.core.dependencies import DependencyManager
+
+def main():
+    """Main training entry point with error handling."""
+    try:
+        # Check dependencies upfront
+        dm = DependencyManager()
+        deps = dm.check_dependencies()
+        
+        if not all(deps.values()) and not args.use_fallbacks:
+            missing = [k for k, v in deps.items() if not v]
+            print(f"⚠️  Missing optional dependencies: {', '.join(missing)}")
+            print("   Running with fallback implementations.")
+            print("   For full performance, install with: pip install -r requirements/ml.txt")
+        
+        # Parse arguments
+        args = parse_args()
+        
+        # Validate configuration
+        try:
+            config = load_and_validate_config(
+                args.config,
+                mode=args.validation_mode
+            )
+        except ConfigurationError as e:
+            print(e)
+            sys.exit(1)
+        
+        # Check memory before starting
+        check_memory_requirements(config)
+        
+        # Run training
+        run_training(config, args)
+        
+    except DependencyError as e:
+        print(e)
+        sys.exit(1)
+        
+    except MemoryError as e:
+        print(e)
+        sys.exit(1)
+        
+    except KeyboardInterrupt:
+        print("\n⚠️  Training interrupted by user")
+        save_checkpoint_on_interrupt()
+        sys.exit(0)
+        
+    except Exception as e:
+        print(f"\n❌ Unexpected error: {e}")
+        print("\n📋 Full traceback:")
+        traceback.print_exc()
+        
+        print("\n💡 If this seems like a bug, please report it with:")
+        print("   1. The full error message above")
+        print("   2. Your configuration file")
+        print("   3. Output of: python scripts/check_dependencies.py")
+        sys.exit(1)
+```
+
+## 11. Implementation Guidance
+
+### Common Pitfalls and Solutions
+
+```markdown
+# docs/IMPLEMENTATION_LESSONS.md
+# Implementation Lessons Learned (Living Document)
+
+## Lesson 1: Dependency Management
+**Issue**: TorchMetrics API changes broke implementation
+**Solution**: Always provide fallback implementations
+**Implementation**:
+```python
+# ALWAYS structure imports like this:
+try:
+    from torchmetrics import Dice
+    HAS_TORCHMETRICS = True
+except ImportError:
+    from .simple import SimpleDice as Dice
+    HAS_TORCHMETRICS = False
+```
+
+## Lesson 2: Import Cycles
+**Issue**: Circular imports between modules
+**Solution**: Clear dependency hierarchy
+**Implementation**:
+- utils → core → data → models → training
+- Never import from higher levels
+- Use TYPE_CHECKING for type hints only
+
+## Lesson 3: Platform Differences
+**Issue**: CUDA/MPS/CPU behave differently
+**Solution**: Platform-aware code with fallbacks
+**Implementation**:
+```python
+def get_device(prefer_mps=True):
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    elif prefer_mps and torch.backends.mps.is_available():
+        # Check for unsupported operations
+        if not check_mps_operations():
+            warnings.warn("MPS missing operations, falling back to CPU")
+            return torch.device("cpu")
+        return torch.device("mps")
+    return torch.device("cpu")
+```
+
+## Lesson 4: Configuration Complexity
+**Issue**: Config validation too strict for development
+**Solution**: Multiple validation modes
+**Implementation**:
+- MINIMAL: For testing (core fields only)
+- PERMISSIVE: For development (warnings on issues)
+- STRICT: For production (fail on any issue)
+
+## Lesson 5: Memory Management
+**Issue**: OOM errors during training
+**Solution**: Proactive memory management
+**Implementation**:
+- Auto batch size adjustment
+- Memory monitoring during training
+- Gradient accumulation for large effective batches
+```
+
+### Platform-Specific Optimizations
+
+```python
+# src/utils/platform.py
+"""Platform detection and optimization."""
+
+import torch
+import platform
+import warnings
+from typing import Dict, Any
+
+class PlatformOptimizer:
+    """Optimize settings for different platforms."""
+    
+    @staticmethod
+    def get_platform_info() -> Dict[str, Any]:
+        """Get current platform information."""
+        info = {
+            'system': platform.system(),
+            'machine': platform.machine(),
+            'python': platform.python_version(),
+            'torch': torch.__version__,
+            'cuda_available': torch.cuda.is_available(),
+            'mps_available': torch.backends.mps.is_available() if hasattr(torch.backends, 'mps') else False,
+            'cpu_count': torch.get_num_threads(),
+        }
+        
+        if info['cuda_available']:
+            info['cuda_version'] = torch.version.cuda
+            info['gpu_name'] = torch.cuda.get_device_name(0)
+            
+        return info
+    
+    @staticmethod
+    def optimize_settings(config: Dict[str, Any]) -> Dict[str, Any]:
+        """Optimize configuration for current platform."""
+        info = PlatformOptimizer.get_platform_info()
+        
+        # Mac M1/M2 optimizations
+        if info['machine'] == 'arm64' and info['system'] == 'Darwin':
+            if info['mps_available']:
+                config['compute']['accelerator'] = 'mps'
+                # MPS doesn't support all operations
+                config['compute']['fallback_to_cpu'] = True
+            else:
+                config['compute']['accelerator'] = 'cpu'
+                # Use multiple threads on CPU
+                torch.set_num_threads(min(8, info['cpu_count']))
+        
+        # CUDA optimizations
+        elif info['cuda_available']:
+            config['compute']['accelerator'] = 'cuda'
+            # Enable mixed precision if GPU supports it
+            if 'A100' in info.get('gpu_name', '') or 'V100' in info.get('gpu_name', ''):
+                config['compute']['precision'] = 16
+        
+        # CPU optimizations
+        else:
+            config['compute']['accelerator'] = 'cpu'
+            torch.set_num_threads(info['cpu_count'])
+            # Reduce batch size for CPU
+            config['training']['batch_size'] = min(
+                config['training']['batch_size'],
+                4
+            )
+        
+        return config
+```
+
+## 12. K-Fold Cross-Validation Implementation
+
+### Cross-Validation Orchestrator
+
 ```python
 # src/core/cross_validation.py
-"""
-K-fold cross-validation orchestrator.
+"""K-fold cross-validation with error handling and memory management."""
 
-This module provides the primary enhancement after MVP completion.
-It wraps the single-split training pipeline to run multiple folds
-and aggregate results.
-"""
-
-from sklearn.model_selection import GroupKFold, StratifiedKFold
-import pytorch_lightning as pl
+from typing import List, Dict, Tuple, Callable, Optional
 from pathlib import Path
 import json
 import numpy as np
+from sklearn.model_selection import KFold, StratifiedKFold, GroupKFold
+import logging
 
-def cross_validate(
-    config: Dict,
-    make_datamodule: Callable,
-    make_model: Callable,
-    make_trainer: Callable,
-    run_root: Path
-) -> Tuple[List[Dict], Dict]:
+from .errors import ConfigurationError
+from .config import Config
+from ..utils.memory import MemoryManager
+
+logger = logging.getLogger(__name__)
+
+class CrossValidator:
     """
-    Run k-fold cross-validation.
+    Orchestrates k-fold cross-validation with robust error handling.
     
-    Args:
-        config: Configuration dictionary with CV settings
-        make_datamodule: Factory function for DataModule
-        make_model: Factory function for model
-        make_trainer: Factory function for trainer
-        run_root: Root directory for outputs
-    
-    Returns:
-        Tuple of (per_fold_results, aggregated_summary)
-    
-    Example:
-        >>> results, summary = cross_validate(
-        ...     config, 
-        ...     make_datamodule,
-        ...     make_model,
-        ...     make_trainer,
-        ...     Path("runs/cv_experiment")
-        ... )
-        >>> print(f"Mean Dice: {summary['dice_mean']:.3f}")
+    This is the primary enhancement after MVP completion.
     """
     
-    cv_config = config.get("cross_validation", {})
-    n_folds = cv_config.get("folds", 5)
-    seed = cv_config.get("seed", 42)
-    
-    # Setup fold splitter based on configuration
-    if cv_config.get("group_by"):
-        # Group-based splitting (e.g., by patient)
-        splitter = GroupKFold(n_splits=n_folds)
-        groups = load_groups(config)  # Load group assignments
-    else:
-        # Standard k-fold
-        splitter = StratifiedKFold(
-            n_splits=n_folds, 
-            shuffle=True, 
-            random_state=seed
-        )
-        groups = None
-    
-    # Collect dataset IDs
-    dataset_ids = load_dataset_ids(config)
-    labels = load_labels(config) if cv_config.get("stratify") else None
-    
-    # Run each fold
-    fold_results = []
-    for fold_idx, (train_idx, val_idx) in enumerate(
-        splitter.split(dataset_ids, labels, groups)
+    def __init__(
+        self,
+        config: Config,
+        run_dir: Path,
+        use_stratified: bool = False,
+        use_groups: bool = False
     ):
-        print(f"\n{'='*50}")
-        print(f"Training Fold {fold_idx + 1}/{n_folds}")
-        print(f"{'='*50}\n")
+        self.config = config
+        self.run_dir = run_dir
+        self.use_stratified = use_stratified
+        self.use_groups = use_groups
+        self.fold_results = []
         
-        # Create fold-specific components
-        fold_dir = run_root / f"fold_{fold_idx}"
+    def run(
+        self,
+        make_datamodule: Callable,
+        make_model: Callable,
+        make_trainer: Callable
+    ) -> Tuple[List[Dict], Dict]:
+        """
+        Run k-fold cross-validation.
+        
+        Returns:
+            (fold_results, aggregated_summary)
+        """
+        # Setup
+        n_folds = self.config.cross_validation.folds
+        seed = self.config.cross_validation.seed
+        
+        # Get data IDs and labels
+        data_ids, labels, groups = self._load_data_info()
+        
+        # Create appropriate splitter
+        splitter = self._create_splitter(n_folds, seed)
+        
+        # Check memory before starting
+        mem_manager = MemoryManager()
+        available_mb = mem_manager.get_available_memory()[0]
+        if available_mb < 4000:  # Less than 4GB
+            logger.warning(f"Low memory ({available_mb}MB). Adjusting settings...")
+            self.config = self._adjust_for_low_memory(self.config)
+        
+        # Run each fold
+        for fold_idx, (train_idx, val_idx) in enumerate(
+            splitter.split(data_ids, labels, groups)
+        ):
+            try:
+                fold_result = self._run_single_fold(
+                    fold_idx=fold_idx,
+                    train_idx=train_idx,
+                    val_idx=val_idx,
+                    data_ids=data_ids,
+                    make_datamodule=make_datamodule,
+                    make_model=make_model,
+                    make_trainer=make_trainer
+                )
+                self.fold_results.append(fold_result)
+                
+            except Exception as e:
+                logger.error(f"Fold {fold_idx} failed: {e}")
+                if self.config.cross_validation.get('continue_on_error', False):
+                    self.fold_results.append({
+                        'fold': fold_idx,
+                        'status': 'failed',
+                        'error': str(e)
+                    })
+                else:
+                    raise
+        
+        # Aggregate results
+        summary = self._aggregate_results()
+        
+        # Save results
+        self._save_results(summary)
+        
+        # Generate report
+        self._generate_report(summary)
+        
+        return self.fold_results, summary
+    
+    def _run_single_fold(
+        self,
+        fold_idx: int,
+        train_idx: np.ndarray,
+        val_idx: np.ndarray,
+        data_ids: np.ndarray,
+        make_datamodule: Callable,
+        make_model: Callable,
+        make_trainer: Callable
+    ) -> Dict:
+        """Run single fold with comprehensive tracking."""
+        
+        logger.info(f"\n{'='*50}")
+        logger.info(f"Training Fold {fold_idx + 1}/{self.config.cross_validation.folds}")
+        logger.info(f"Train samples: {len(train_idx)}, Val samples: {len(val_idx)}")
+        logger.info(f"{'='*50}\n")
+        
+        # Create fold directory
+        fold_dir = self.run_dir / f"fold_{fold_idx}"
         fold_dir.mkdir(parents=True, exist_ok=True)
         
+        # Create components
         datamodule = make_datamodule(
-            train_ids=dataset_ids[train_idx],
-            val_ids=dataset_ids[val_idx],
-            config=config
+            train_ids=data_ids[train_idx],
+            val_ids=data_ids[val_idx],
+            config=self.config
         )
         
-        model = make_model(config=config, seed=seed + fold_idx)
+        # Seed per fold for diversity
+        model = make_model(
+            config=self.config,
+            seed=self.config.compute.seed + fold_idx
+        )
         
         trainer = make_trainer(
-            config=config,
+            config=self.config,
             default_root_dir=fold_dir,
             fold=fold_idx
         )
         
-        # Train this fold
+        # Train
         trainer.fit(model, datamodule)
         
-        # Evaluate on validation set
-        val_metrics = trainer.validate(model, datamodule)[0]
+        # Validate
+        val_results = trainer.validate(model, datamodule)[0]
         
-        # Store results
+        # Compile results
         fold_result = {
-            "fold": fold_idx,
-            "train_samples": len(train_idx),
-            "val_samples": len(val_idx),
-            **val_metrics
+            'fold': fold_idx,
+            'status': 'completed',
+            'train_samples': len(train_idx),
+            'val_samples': len(val_idx),
+            'metrics': val_results,
+            'best_epoch': trainer.current_epoch,
         }
-        fold_results.append(fold_result)
         
-        # Save fold-specific metrics
-        with open(fold_dir / "metrics.json", "w") as f:
+        # Save fold results
+        with open(fold_dir / 'results.json', 'w') as f:
             json.dump(fold_result, f, indent=2)
-    
-    # Aggregate results across folds
-    summary = aggregate_cv_metrics(fold_results)
-    
-    # Save aggregated results
-    with open(run_root / "cv_summary.json", "w") as f:
-        json.dump({
-            "per_fold": fold_results,
-            "aggregated": summary,
-            "config": cv_config
-        }, f, indent=2)
-    
-    # Generate CV report
-    generate_cv_report(fold_results, summary, run_root)
-    
-    return fold_results, summary
-
-
-def aggregate_cv_metrics(fold_results: List[Dict]) -> Dict:
-    """
-    Aggregate metrics across CV folds.
-    
-    Computes mean, std, min, max, and 95% CI for each metric.
-    """
-    # Extract metric names (exclude metadata fields)
-    exclude_fields = {"fold", "train_samples", "val_samples"}
-    metric_names = [
-        k for k in fold_results[0].keys() 
-        if k not in exclude_fields
-    ]
-    
-    summary = {}
-    for metric in metric_names:
-        values = np.array([r[metric] for r in fold_results])
         
-        summary[f"{metric}_mean"] = float(np.mean(values))
-        summary[f"{metric}_std"] = float(np.std(values))
-        summary[f"{metric}_min"] = float(np.min(values))
-        summary[f"{metric}_max"] = float(np.max(values))
-        
-        # 95% confidence interval
-        sem = np.std(values) / np.sqrt(len(values))
-        ci_95 = 1.96 * sem
-        summary[f"{metric}_ci95"] = float(ci_95)
+        return fold_result
     
-    return summary
+    def _aggregate_results(self) -> Dict:
+        """Aggregate metrics across folds."""
+        
+        # Filter successful folds
+        successful_folds = [
+            r for r in self.fold_results 
+            if r.get('status') == 'completed'
+        ]
+        
+        if not successful_folds:
+            raise RuntimeError("No successful folds to aggregate")
+        
+        # Extract metrics
+        metric_names = list(successful_folds[0]['metrics'].keys())
+        
+        summary = {
+            'total_folds': self.config.cross_validation.folds,
+            'successful_folds': len(successful_folds),
+            'metrics': {}
+        }
+        
+        for metric in metric_names:
+            values = [r['metrics'][metric] for r in successful_folds]
+            summary['metrics'][metric] = {
+                'mean': float(np.mean(values)),
+                'std': float(np.std(values)),
+                'min': float(np.min(values)),
+                'max': float(np.max(values)),
+                'values': values
+            }
+            
+            # 95% confidence interval
+            if len(values) > 1:
+                sem = np.std(values) / np.sqrt(len(values))
+                ci_95 = 1.96 * sem
+                summary['metrics'][metric]['ci_95'] = float(ci_95)
+        
+        return summary
 ```
 
-### Configuration for K-Fold
-```yaml
-# When ready to enable k-fold (v2.1)
-cross_validation:
-  enabled: true
-  folds: 5
-  seed: 42
-  
-  # Optional: stratification for imbalanced data
-  stratify: true
-  stratify_by: "lesion_type"  # Column name in labels
-  
-  # Optional: group-based splitting to prevent data leakage
-  group_by: "patient_id"  # Ensures same patient not in train & val
-  
-  # Optional: nested CV for hyperparameter tuning
-  nested:
-    enabled: false
-    inner_folds: 3
-```
+## 13. Dependency Diagnostic Tool
 
-## 12. Performance & Profiling
-
-### Built-in Profiling
 ```python
-# Lightning provides profiling out of the box
-trainer = Trainer(
-    profiler="simple",  # or "advanced" for detailed profiling
-    max_epochs=10
-)
+# scripts/check_dependencies.py
+"""Comprehensive dependency diagnostic tool."""
 
-# Results automatically logged showing:
-# - Time per epoch
-# - Time per batch
-# - Data loading time
-# - Model forward/backward time
-```
-
-### Memory Optimization
-- Gradient accumulation for large effective batch sizes
-- Mixed precision training (fp16) when supported
-- Automatic batch size finder (Lightning feature)
-
-## 13. Migration Path to Classification
-
-### What Stays the Same
-- **Infrastructure**: Lightning trainer, callbacks, logging, checkpointing
-- **Data Pipeline**: DataModule pattern, transforms, caching
-- **Backbones**: Same encoders from timm/torchvision
-- **Config System**: Same YAML structure with task switch
-- **Output Structure**: Same directory layout
-- **Testing Framework**: Same test patterns
-
-### What Changes
-| Component | Segmentation | Classification |
-|-----------|--------------|----------------|
-| **Model Head** | U-Net decoder | Global pool + Linear |
-| **Loss** | Dice/Tversky | CrossEntropy/Focal |
-| **Metrics** | IoU/Dice | Accuracy/AUROC/F1 |
-| **Labels** | Mask images | CSV with classes |
-| **Inference** | May need sliding window | Single forward pass |
-| **Augmentations** | Geometric on image+mask | Geometric on image only |
-
-### Example Classification Config (Future)
-```yaml
-task: "classification"
-
-dataset:
-  labels_file: "./labels.csv"  # Instead of masks_dir
-  label_column: "diagnosis"
-  
-model:
-  architecture: "resnet50"  # Or "efficientnet_b0", "vit_base"
-  num_classes: 4
-  pretrained: true
-  
-training:
-  loss:
-    type: "cross_entropy"  # Or "focal" for imbalanced
-    params:
-      weight: [1.0, 2.0, 2.0, 3.0]  # Class weights
-      
-  metrics:
-    - "accuracy"
-    - "auroc"
-    - "f1_macro"
-    - "confusion_matrix"
-```
-
-## 14. Future Enhancements
-
-### Near-term (v2.1 - v2.3)
-1. **K-fold cross-validation** (detailed above)
-2. **Test-time augmentation** (horizontal flip → rotation → multi-scale)
-3. **Sliding window inference** for large images
-4. **Additional losses**: Focal, Boundary, Hausdorff
-5. **Experiment tracking**: MLflow/W&B integration
-
-### Medium-term (v3.0)
-1. **MONAI Integration**:
-   - Medical image I/O (NIfTI, DICOM)
-   - 3D transforms and models
-   - Medical-specific metrics (HD95, Surface Dice)
-   - Sliding window inference utilities
-
-2. **Classification Support**:
-   - Shared codebase with segmentation
-   - Multi-label and multi-class
-   - Class activation maps
-
-### Long-term (v4.0+)
-1. **Multimodal**:
-   - Image + tabular fusion
-   - Early/late fusion strategies
-   - Cross-attention mechanisms
-
-2. **Advanced Features**:
-   - AutoML for hyperparameter search
-   - Neural architecture search
-   - Self-supervised pretraining
-   - Active learning loops
-
-## 15. Quality Assurance
-
-### Code Quality Standards
-- Type hints for all public functions
-- Docstrings following Google style
-- Maximum line length: 100 characters
-- McCabe complexity < 10
-- Test coverage > 80% for core modules
-
-### Review Checklist
-- [ ] Config validates without errors
-- [ ] Training runs to completion
-- [ ] Metrics are logged correctly
-- [ ] Checkpoints are saved
-- [ ] Visualizations generated
-- [ ] Documentation updated
-- [ ] Tests pass
-
-## 16. Success Metrics
-
-### MVP Success Criteria
-1. **Functional**: DRIVE segmentation pipeline runs end-to-end
-2. **Performance**: Dice score > 0.75 on DRIVE test set
-3. **Speed**: Training completes in < 1 hour on M1 MacBook
-4. **Documentation**: README enables new user success in < 30 minutes
-5. **Extensibility**: New model addition requires < 50 lines of code
-
-### v2.1 Success Criteria
-1. **K-fold CV** produces statistically meaningful results
-2. **Documentation** includes 3+ complete examples
-3. **Test coverage** > 80%
-4. **Community**: First external contributor
-
-## 17. Risk Mitigation
-
-| Risk | Mitigation |
-|------|------------|
-| **Overfitting to small datasets** | Strong augmentation, cross-validation |
-| **Library version conflicts** | Pin all dependencies, use lock files |
-| **Memory issues on large images** | Sliding window, gradient accumulation |
-| **Reproducibility concerns** | Fixed seeds, deterministic mode, config tracking |
-| **Performance bottlenecks** | Profiling from day 1, mixed precision ready |
-
-## 18. Development Guidelines
-
-### Git Workflow
-```bash
-# Feature branch workflow
-git checkout -b feature/add-tversky-loss
-# Make changes
-git add -p  # Review changes carefully
-git commit -m "feat: add Tversky loss with alpha/beta parameters"
-git push origin feature/add-tversky-loss
-# Create PR with tests and documentation
-```
-
-### Commit Message Format
-```
-<type>: <description>
-
-[optional body]
-
-Type: feat|fix|docs|style|refactor|test|chore
-```
-
-### PR Requirements
-- Passes all tests
-- Includes documentation updates
-- Has meaningful commit messages
-- Reviewed by at least one person
-
-## 19. Conclusion
-
-This design provides a **production-ready segmentation platform** that:
-1. **Leverages proven tools** (SMP, Lightning) instead of reinventing
-2. **Maintains clean interfaces** for future extensibility  
-3. **Focuses on immediate value** (segmentation) with clear upgrade paths
-4. **Emphasizes documentation** for team scalability
-5. **Builds on solid foundations** ready for MONAI, classification, and multimodal
-
-The platform can be implemented in **2-3 weeks** for MVP, with k-fold CV and enhancements following immediately after validation.
-
-## 20. Appendix A: Code Examples
-
-### A.1 Minimal Training Script
-```python
-# scripts/train.py
-"""
-Main training script for segmentation platform.
-
-This script orchestrates the entire training pipeline from config
-loading through model training to results visualization.
-"""
-
-import argparse
-import logging
+import sys
+import importlib.util
 from pathlib import Path
-from datetime import datetime
+from typing import Dict, Tuple
 import json
-import yaml
 
-import pytorch_lightning as pl
-from pytorch_lightning.callbacks import (
-    ModelCheckpoint, 
-    EarlyStopping,
-    LearningRateMonitor
-)
-from pytorch_lightning.loggers import CSVLogger
-
-from src.core.config import load_and_validate_config
-from src.data.datamodule import SegmentationDataModule
-from src.models.lightning_module import SegmentationModel
-from src.utils.reproducibility import set_global_seed
-from src.utils.logging import setup_logging
-
+def check_dependency(package: str) -> Tuple[bool, str]:
+    """Check if a package is available and get version."""
+    spec = importlib.util.find_spec(package)
+    if spec is None:
+        return False, "Not installed"
+    
+    try:
+        module = importlib.import_module(package)
+        version = getattr(module, '__version__', 'Unknown version')
+        return True, version
+    except Exception as e:
+        return False, f"Import error: {e}"
 
 def main():
-    """Main training entry point."""
+    """Run dependency diagnostics."""
+    print("🔍 Checking Dependencies\n")
+    print("=" * 60)
     
-    # Parse arguments
-    parser = argparse.ArgumentParser(
-        description="Train segmentation model",
-        formatter_class=argparse.RawDescriptionHelpFormatter
-    )
-    parser.add_argument(
-        "--config", 
-        type=str, 
-        required=True,
-        help="Path to configuration YAML file"
-    )
-    parser.add_argument(
-        "--name",
-        type=str,
-        default=None,
-        help="Experiment name (defaults to config name + timestamp)"
-    )
-    parser.add_argument(
-        "--resume",
-        type=str,
-        default=None,
-        help="Path to checkpoint to resume training"
-    )
-    args = parser.parse_args()
+    # Core dependencies
+    print("\n📦 Core Dependencies (Required):")
+    core_deps = ['torch', 'numpy', 'pyyaml', 'pydantic', 'pillow']
+    core_status = check_dependencies(core_deps)
     
-    # Load and validate configuration
-    config = load_and_validate_config(args.config)
+    # ML dependencies
+    print("\n🤖 ML Dependencies (Performance):")
+    ml_deps = ['pytorch_lightning', 'segmentation_models_pytorch', 
+               'torchmetrics', 'albumentations', 'timm']
+    ml_status = check_dependencies(ml_deps)
     
-    # Setup experiment directory
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    exp_name = args.name or f"{config['project_name']}_{timestamp}"
-    run_dir = Path(config['output']['dir']) / exp_name
-    run_dir.mkdir(parents=True, exist_ok=True)
+    # Visualization dependencies
+    print("\n📊 Visualization Dependencies:")
+    viz_deps = ['matplotlib', 'seaborn', 'jinja2']
+    viz_status = check_dependencies(viz_deps)
     
-    # Setup logging
-    setup_logging(run_dir / "train.log", level=config['logging']['level'])
-    logger = logging.getLogger(__name__)
-    logger.info(f"Starting training: {exp_name}")
+    # Platform information
+    print("\n💻 Platform Information:")
+    print_platform_info()
     
-    # Save configuration
-    with open(run_dir / "config.yaml", "w") as f:
-        yaml.dump(config, f, default_flow_style=False)
+    # Recommendations
+    print("\n💡 Recommendations:")
+    provide_recommendations(core_status, ml_status, viz_status)
     
-    # Set random seeds for reproducibility
-    seed = config['compute']['seed']
-    set_global_seed(seed)
-    logger.info(f"Random seed set to: {seed}")
-    
-    # Save environment info
-    save_environment_info(run_dir / "environment.json")
-    
-    # Create data module
-    logger.info("Setting up data module...")
-    datamodule = SegmentationDataModule(config)
-    datamodule.setup("fit")
-    
-    # Log data statistics
-    logger.info(f"Training samples: {len(datamodule.train_dataset)}")
-    logger.info(f"Validation samples: {len(datamodule.val_dataset)}")
-    
-    # Create model
-    logger.info("Creating model...")
-    model = SegmentationModel(config)
-    logger.info(f"Model: {config['model']['architecture']} "
-                f"with {config['model']['encoder']} encoder")
-    
-    # Setup callbacks
-    callbacks = [
-        # Save best model based on validation loss
-        ModelCheckpoint(
-            dirpath=run_dir / "checkpoints",
-            filename="best",
-            monitor=config['output']['checkpoint']['monitor'],
-            mode=config['output']['checkpoint']['mode'],
-            save_best_only=config['output']['checkpoint']['save_best_only'],
-            verbose=True
-        ),
-        
-        # Learning rate monitoring
-        LearningRateMonitor(logging_interval='epoch'),
-    ]
-    
-    # Add early stopping if configured
-    if config['training'].get('early_stopping'):
-        callbacks.append(
-            EarlyStopping(
-                monitor=config['training']['early_stopping']['monitor'],
-                patience=config['training']['early_stopping']['patience'],
-                mode=config['training']['early_stopping']['mode'],
-                verbose=True
-            )
-        )
-    
-    # Setup trainer
-    logger.info("Initializing trainer...")
-    trainer = pl.Trainer(
-        default_root_dir=run_dir,
-        max_epochs=config['training']['epochs'],
-        accelerator=config['compute']['accelerator'],
-        devices=config['compute']['devices'],
-        precision=config['compute']['precision'],
-        deterministic=config['compute']['deterministic'],
-        callbacks=callbacks,
-        logger=CSVLogger(run_dir / "metrics"),
-        enable_progress_bar=True,
-        log_every_n_steps=10,
-        
-        # Optional: gradient accumulation for effective larger batches
-        accumulate_grad_batches=config['training'].get(
-            'accumulate_grad_batches', 1
-        ),
-        
-        # Optional: mixed precision training
-        amp_backend='native' if config['compute']['precision'] == 16 else None,
-    )
-    
-    # Train model
-    logger.info("Starting training...")
-    trainer.fit(
-        model=model,
-        datamodule=datamodule,
-        ckpt_path=args.resume
-    )
-    
-    # Run validation on best model
-    logger.info("Running final validation...")
-    trainer.validate(
-        model=model,
-        datamodule=datamodule,
-        ckpt_path="best"
-    )
-    
-    # Generate visualizations if requested
-    if config['output'].get('save_overlays'):
-        logger.info("Generating overlays...")
-        from src.visualization.overlays import generate_overlays
-        generate_overlays(
-            model=model,
-            datamodule=datamodule,
-            output_dir=run_dir / "overlays",
-            device=trainer.device
-        )
-    
-    # Generate final report
-    logger.info("Generating report...")
-    from src.reporting.report import generate_training_report
-    generate_training_report(
-        run_dir=run_dir,
-        config=config
-    )
-    
-    logger.info(f"Training complete! Results saved to: {run_dir}")
+    # Save diagnostic report
+    save_diagnostic_report(core_status, ml_status, viz_status)
 
+def check_dependencies(deps: list) -> Dict[str, Tuple[bool, str]]:
+    """Check a list of dependencies."""
+    status = {}
+    for dep in deps:
+        available, version = check_dependency(dep)
+        status[dep] = (available, version)
+        
+        if available:
+            print(f"  ✅ {dep:<25} {version}")
+        else:
+            print(f"  ❌ {dep:<25} {version}")
+    
+    return status
 
-def save_environment_info(output_path: Path):
-    """Save environment information for reproducibility."""
+def print_platform_info():
+    """Print platform information."""
+    import platform
     import torch
-    import torchvision
-    import segmentation_models_pytorch as smp
-    import pytorch_lightning as pl
-    import albumentations as A
     
-    env_info = {
-        "python": sys.version,
-        "pytorch": torch.__version__,
-        "torchvision": torchvision.__version__,
-        "lightning": pl.__version__,
-        "smp": smp.__version__,
-        "albumentations": A.__version__,
-        "cuda_available": torch.cuda.is_available(),
-        "cuda_version": torch.version.cuda if torch.cuda.is_available() else None,
-        "device_count": torch.cuda.device_count() if torch.cuda.is_available() else 0,
+    print(f"  OS:        {platform.system()} {platform.release()}")
+    print(f"  Python:    {platform.python_version()}")
+    print(f"  PyTorch:   {torch.__version__}")
+    
+    if torch.cuda.is_available():
+        print(f"  CUDA:      ✅ {torch.version.cuda}")
+        print(f"  GPU:       {torch.cuda.get_device_name(0)}")
+    else:
+        print(f"  CUDA:      ❌ Not available")
+    
+    if hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        print(f"  MPS:       ✅ Available (Apple Silicon)")
+    else:
+        print(f"  MPS:       ❌ Not available")
+
+def provide_recommendations(core_status, ml_status, viz_status):
+    """Provide installation recommendations."""
+    
+    # Check core
+    core_missing = [k for k, (v, _) in core_status.items() if not v]
+    if core_missing:
+        print(f"\n  ⚠️  Missing core dependencies: {', '.join(core_missing)}")
+        print(f"     Install with: pip install -r requirements/base.txt")
+    
+    # Check ML
+    ml_missing = [k for k, (v, _) in ml_status.items() if not v]
+    if ml_missing:
+        print(f"\n  ℹ️  Missing ML dependencies: {', '.join(ml_missing)}")
+        print(f"     For full performance: pip install -r requirements/ml.txt")
+        print(f"     The system will use fallback implementations.")
+    
+    # Check viz
+    viz_missing = [k for k, (v, _) in viz_status.items() if not v]
+    if viz_missing:
+        print(f"\n  ℹ️  Missing visualization dependencies: {', '.join(viz_missing)}")
+        print(f"     For enhanced visualizations: pip install -r requirements/viz.txt")
+
+def save_diagnostic_report(core_status, ml_status, viz_status):
+    """Save diagnostic report to file."""
+    report = {
+        'timestamp': str(Path.ctime(Path.cwd())),
+        'core': {k: {'available': v[0], 'version': v[1]} 
+                 for k, v in core_status.items()},
+        'ml': {k: {'available': v[0], 'version': v[1]} 
+               for k, v in ml_status.items()},
+        'viz': {k: {'available': v[0], 'version': v[1]} 
+                for k, v in viz_status.items()},
     }
     
-    with open(output_path, "w") as f:
-        json.dump(env_info, f, indent=2)
-
+    with open('dependency_report.json', 'w') as f:
+        json.dump(report, f, indent=2)
+    
+    print(f"\n📄 Detailed report saved to: dependency_report.json")
 
 if __name__ == "__main__":
     main()
 ```
 
-### A.2 Lightning Module Implementation
-```python
-# src/models/lightning_module.py
-"""
-PyTorch Lightning module for segmentation.
-
-This module encapsulates the model, loss, metrics, and training logic
-in a reusable Lightning module that handles all aspects of training.
-"""
-
-import pytorch_lightning as pl
-import torch
-import torch.nn.functional as F
-import segmentation_models_pytorch as smp
-from torchmetrics import Dice, JaccardIndex, Precision, Recall
-
-from src.losses import get_loss
-from src.utils.logging import get_logger
-
-logger = get_logger(__name__)
-
-
-class SegmentationModel(pl.LightningModule):
-    """
-    Lightning module for segmentation tasks.
-    
-    This class wraps an SMP model with Lightning training logic,
-    handling loss computation, metric tracking, and optimization.
-    
-    Args:
-        config: Configuration dictionary containing model, training,
-                and loss specifications
-    """
-    
-    def __init__(self, config: dict):
-        super().__init__()
-        self.config = config
-        self.save_hyperparameters(config)
-        
-        # Create model from SMP
-        model_config = config['model']
-        self.model = getattr(smp, model_config['architecture'])(
-            encoder_name=model_config['encoder'],
-            encoder_weights=model_config.get('encoder_weights', 'imagenet'),
-            in_channels=model_config.get('in_channels', 3),
-            classes=model_config.get('classes', 1),
-        )
-        
-        # Setup loss function
-        loss_config = config['training']['loss']
-        self.loss_fn = get_loss(loss_config['type'], loss_config.get('params', {}))
-        
-        # Setup metrics
-        metrics_config = config['training'].get('metrics', ['dice'])
-        self.setup_metrics(metrics_config)
-        
-        # Training configuration
-        self.learning_rate = config['training']['learning_rate']
-        self.optimizer_name = config['training'].get('optimizer', 'adamw')
-        self.scheduler_config = config['training'].get('scheduler', {})
-        
-    def setup_metrics(self, metric_names):
-        """Initialize TorchMetrics metrics."""
-        self.train_metrics = {}
-        self.val_metrics = {}
-        
-        for name in metric_names:
-            if name == 'dice':
-                metric = Dice(num_classes=2, average='micro')
-            elif name == 'iou':
-                metric = JaccardIndex(num_classes=2, average='micro')
-            elif name == 'precision':
-                metric = Precision(num_classes=2, average='micro')
-            elif name == 'recall':
-                metric = Recall(num_classes=2, average='micro')
-            else:
-                logger.warning(f"Unknown metric: {name}, skipping")
-                continue
-            
-            # Clone for train and val to maintain separate states
-            self.train_metrics[name] = metric.clone()
-            self.val_metrics[name] = metric.clone()
-    
-    def forward(self, x):
-        """Forward pass through the model."""
-        return self.model(x)
-    
-    def training_step(self, batch, batch_idx):
-        """Training step for one batch."""
-        images, masks = batch
-        
-        # Forward pass
-        logits = self(images)
-        
-        # Calculate loss
-        loss = self.loss_fn(logits, masks)
-        
-        # Calculate and log metrics
-        preds = torch.sigmoid(logits)
-        preds_binary = (preds > 0.5).float()
-        
-        for name, metric in self.train_metrics.items():
-            metric(preds_binary, masks)
-            self.log(f'train/{name}', metric, on_step=False, on_epoch=True, prog_bar=True)
-        
-        self.log('train/loss', loss, on_step=True, on_epoch=True, prog_bar=True)
-        
-        return loss
-    
-    def validation_step(self, batch, batch_idx):
-        """Validation step for one batch."""
-        images, masks = batch
-        
-        # Forward pass
-        logits = self(images)
-        
-        # Calculate loss
-        loss = self.loss_fn(logits, masks)
-        
-        # Calculate and log metrics
-        preds = torch.sigmoid(logits)
-        preds_binary = (preds > 0.5).float()
-        
-        for name, metric in self.val_metrics.items():
-            metric(preds_binary, masks)
-            self.log(f'val/{name}', metric, on_step=False, on_epoch=True, prog_bar=True)
-        
-        self.log('val/loss', loss, on_step=False, on_epoch=True, prog_bar=True)
-        
-        return loss
-    
-    def configure_optimizers(self):
-        """Configure optimizer and learning rate scheduler."""
-        
-        # Setup optimizer
-        if self.optimizer_name == 'adam':
-            optimizer = torch.optim.Adam(
-                self.parameters(), 
-                lr=self.learning_rate
-            )
-        elif self.optimizer_name == 'adamw':
-            optimizer = torch.optim.AdamW(
-                self.parameters(), 
-                lr=self.learning_rate,
-                weight_decay=self.config['training'].get('weight_decay', 1e-4)
-            )
-        elif self.optimizer_name == 'sgd':
-            optimizer = torch.optim.SGD(
-                self.parameters(),
-                lr=self.learning_rate,
-                momentum=0.9,
-                weight_decay=self.config['training'].get('weight_decay', 1e-4)
-            )
-        else:
-            raise ValueError(f"Unknown optimizer: {self.optimizer_name}")
-        
-        # Return optimizer only if no scheduler
-        if not self.scheduler_config:
-            return optimizer
-        
-        # Setup scheduler
-        scheduler_type = self.scheduler_config['type']
-        
-        if scheduler_type == 'cosine':
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                optimizer,
-                T_max=self.trainer.max_epochs,
-                eta_min=self.scheduler_config.get('min_lr', 1e-6)
-            )
-        elif scheduler_type == 'step':
-            scheduler = torch.optim.lr_scheduler.StepLR(
-                optimizer,
-                step_size=self.scheduler_config.get('step_size', 10),
-                gamma=self.scheduler_config.get('gamma', 0.1)
-            )
-        elif scheduler_type == 'plateau':
-            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-                optimizer,
-                mode='min',
-                factor=self.scheduler_config.get('factor', 0.5),
-                patience=self.scheduler_config.get('patience', 5)
-            )
-            return {
-                'optimizer': optimizer,
-                'lr_scheduler': {
-                    'scheduler': scheduler,
-                    'monitor': 'val/loss',
-                }
-            }
-        else:
-            raise ValueError(f"Unknown scheduler: {scheduler_type}")
-        
-        return [optimizer], [scheduler]
-    
-    def predict_step(self, batch, batch_idx):
-        """
-        Prediction step for inference.
-        
-        Can be extended for TTA or sliding window inference.
-        """
-        images = batch if isinstance(batch, torch.Tensor) else batch[0]
-        
-        # Standard prediction
-        logits = self(images)
-        preds = torch.sigmoid(logits)
-        
-        return (preds > 0.5).float()
-```
-
-## 21. Appendix B: Sample README Structure
+## 14. Architecture Decision Records
 
 ```markdown
-# Image Segmentation Platform
+# docs/ARCHITECTURE_DECISIONS.md
 
-A production-ready deep learning platform for image segmentation using PyTorch Lightning and Segmentation Models PyTorch.
+## ADR-001: Use SMP Instead of Custom Models
+**Date**: 2025-01-15  
+**Status**: Accepted
 
-## 🚀 Quick Start (5 minutes)
+### Context
+Need segmentation models quickly without reinventing the wheel.
 
-### Installation
-```bash
-# Clone repository
-git clone https://github.com/yourorg/segmentation-platform
-cd segmentation-platform
+### Decision
+Use Segmentation Models PyTorch (SMP) with fallback simple UNet.
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+### Alternatives Considered
+1. Custom implementations (too time-consuming)
+2. MONAI (too medical-specific for MVP)
+3. MMSegmentation (too complex)
 
-# Install dependencies
-pip install -r requirements.txt
+### Consequences
+- ✅ Fast implementation
+- ✅ Proven models
+- ✅ Good encoder variety via timm
+- ❌ Extra dependency
+- ❌ Less control over architecture
+
+### Mitigation
+Provide SimpleUNet fallback for when SMP unavailable.
+
+---
+
+## ADR-002: Three-Tier Testing Strategy
+**Date**: 2025-01-15  
+**Status**: Accepted
+
+### Context
+Need to test without installing heavy ML dependencies.
+
+### Decision
+Three testing tiers: unit (no deps), integration_minimal (core), integration_full (all).
+
+### Consequences
+- ✅ Can always run some tests
+- ✅ Faster CI for PRs
+- ✅ Better developer experience
+- ❌ More test complexity
+
+---
+
+## ADR-003: Configuration Validation Modes
+**Date**: 2025-01-15  
+**Status**: Accepted
+
+### Context
+Strict validation hinders development iteration.
+
+### Decision
+Three validation modes: MINIMAL, PERMISSIVE, STRICT.
+
+### Consequences
+- ✅ Fast development iteration
+- ✅ Production safety with STRICT
+- ✅ Gradual configuration refinement
+- ❌ Multiple code paths to maintain
 ```
 
-### Download Example Data
-```bash
-# Download DRIVE dataset
-python scripts/download_drive.py --output data/drive
-```
+## 15. Conclusion
 
-### Train Your First Model
-```bash
-# Train U-Net on DRIVE dataset
-python scripts/train.py --config configs/drive.yaml --name my_first_run
+This Software Design Document v3.0 incorporates comprehensive lessons learned from implementing the MVP through Week 2. Key improvements include:
 
-# Monitor training (metrics are auto-logged)
-# Results will be in runs/my_first_run/
-```
+1. **Robust Dependency Management** - Fallback implementations for all optional dependencies
+2. **Three-Tier Testing Strategy** - Enables development without full stack
+3. **Flexible Configuration Validation** - Multiple modes for different use cases
+4. **Detailed Visualization Specifications** - No ambiguity in implementation
+5. **Comprehensive Error Handling** - Helpful messages with solutions
+6. **Memory Management** - Proactive monitoring and adjustment
+7. **Platform Optimizations** - Automatic tuning for CUDA/MPS/CPU
+8. **Living Documentation** - Implementation lessons continuously updated
 
-### View Results
-```bash
-# Generate overlay visualizations
-python scripts/visualize_results.py --run-dir runs/my_first_run/
+The platform is now ready for:
+- **Immediate**: K-fold cross-validation implementation
+- **Next Sprint**: TTA and sliding window inference
+- **Future**: Classification tasks and MONAI integration
 
-# Open the generated report
-open runs/my_first_run/report.html
-```
-
-## 📖 Detailed Documentation
-
-- [Configuration Guide](docs/CONFIG_GUIDE.md) - All configuration options explained
-- [Architecture Overview](docs/ARCHITECTURE.md) - System design and interfaces
-- [Extending the Platform](docs/EXTENDING.md) - Add new models, losses, metrics
-- [API Reference](docs/API.md) - Detailed API documentation
-
-## 🎯 Key Features
-
-- **Pre-built Models**: U-Net, U-Net++, DeepLabV3+ with any timm encoder
-- **Flexible Losses**: Dice, Tversky, BCE, Focal, and combinations
-- **Comprehensive Metrics**: IoU, Dice, Precision, Recall, HD95
-- **Data Augmentation**: Albumentations integration with 50+ transforms
-- **Automatic Mixed Precision**: For faster training on GPUs
-- **Cross-Validation**: K-fold CV with stratification and grouping
-- **Test-Time Augmentation**: Improve predictions with TTA
-- **Experiment Tracking**: Built-in logging, optional MLflow/W&B
-
-## 🔧 Configuration System
-
-All parameters controlled via YAML configs:
-
-```yaml
-model:
-  architecture: "Unet"        # or "UnetPlusPlus", "DeepLabV3Plus"
-  encoder: "efficientnet-b3"  # Any timm encoder
-  encoder_weights: "imagenet"
-
-training:
-  epochs: 100
-  batch_size: 16
-  learning_rate: 1e-4
-  
-  loss:
-    type: "dice"              # or "tversky", "bce", "focal"
-    params:
-      smooth: 1.0
-```
-
-[Full configuration guide →](docs/CONFIG_GUIDE.md)
-
-## 📊 Supported Datasets
-
-### Built-in Support
-- DRIVE (retinal vessels)
-- CHASE-DB1 (retinal vessels)  
-- HRF (high-resolution fundus)
-- STARE (retinal vessels)
-
-### Custom Datasets
-Simply point to your data:
-```yaml
-dataset:
-  images_dir: "path/to/images"
-  masks_dir: "path/to/masks"
-```
-
-[Dataset preparation guide →](docs/DATASETS.md)
-
-## 🧪 Testing
-
-```bash
-# Run all tests
-pytest
-
-# Run with coverage
-pytest --cov=src --cov-report=html
-
-# Quick integration test
-pytest tests/integration/test_training.py -k test_single_epoch
-```
-
-## 📈 Performance
-
-| Dataset | Model | Encoder | Dice | IoU | Time (M1) |
-|---------|-------|---------|------|-----|-----------|
-| DRIVE | U-Net | ResNet34 | 0.82 | 0.76 | 12 min |
-| DRIVE | U-Net++ | EfficientNet-B3 | 0.84 | 0.78 | 18 min |
-| DRIVE | DeepLabV3+ | ResNet50 | 0.83 | 0.77 | 15 min |
-
-## 🗺️ Roadmap
-
-### Current Release (v2.0)
-- ✅ Single train/val split training
-- ✅ SMP model integration
-- ✅ Lightning training loop
-- ✅ Comprehensive metrics
-
-### Next Release (v2.1)
-- 🔄 K-fold cross-validation
-- 🔄 Test-time augmentation
-- 🔄 Sliding window inference
-
-### Future (v3.0+)
-- ⏳ MONAI integration
-- ⏳ 3D segmentation support
-- ⏳ Classification tasks
-- ⏳ Multimodal fusion
-
-## 🤝 Contributing
-
-We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-## 📝 Citation
-
-If you use this platform in your research, please cite:
-```bibtex
-@software{segmentation_platform,
-  title = {Image Segmentation Platform},
-  author = {Your Team},
-  year = {2025},
-  url = {https://github.com/yourorg/segmentation-platform}
-}
-```
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) for details.
-```
-
-## 22. Conclusion
-
-This revised design document addresses the core issues while maintaining the modularity vision:
-
-1. **Focused Scope**: Segmentation only, with clear upgrade path
-2. **Leverages Libraries**: SMP + Lightning eliminates boilerplate
-3. **Simple Start**: Single split MVP, k-fold immediately after
-4. **Strong Documentation**: Comprehensive comments and guides required
-5. **Clean Interfaces**: 5 stable contracts for long-term flexibility
-
-The platform can be implemented in **2-3 weeks** for MVP, with k-fold CV and enhancements following immediately after validation.
+This document serves as both a **blueprint for new features** and a **reference for solving common issues**, ensuring smooth development as the platform evolves.
