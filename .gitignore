@@ -69,4 +69,6 @@ Thumbs.db
 
 # Temporary files
 *.tmp
-*.temp
+*.temp.coverage
+__pycache__/
+*.pyc
