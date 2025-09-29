@@ -23,7 +23,10 @@ class ValidationMode(Enum):
 
 def get_validation_mode() -> ValidationMode:
     """
-    Get validation mode based on environment.
+    Get validation mode - defaults to STRICT per SDD v4.0 Appendix A.1.
+
+    SDD v4.0 mandates STRICT by default for safety. Must explicitly
+    request PERMISSIVE mode for development.
 
     Returns:
         ValidationMode: Auto-detected or explicitly set mode
@@ -32,17 +35,7 @@ def get_validation_mode() -> ValidationMode:
     if mode := os.environ.get('CONFIG_VALIDATION_MODE'):
         return ValidationMode(mode.lower())
 
-    # CI environment detection
-    if os.environ.get('CI'):
-        if 'unit' in os.environ.get('TEST_SUITE', ''):
-            return ValidationMode.MINIMAL
-        return ValidationMode.STRICT
-
-    # Local development detection
-    if os.environ.get('USER'):  # Local machine
-        return ValidationMode.PERMISSIVE
-
-    # Default to STRICT for safety
+    # Default to STRICT - must explicitly loosen per SDD v4.0
     return ValidationMode.STRICT
 
 

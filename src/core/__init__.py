@@ -10,6 +10,7 @@ from .dependencies import (
 from .effective_settings import EffectiveSettingsLogger
 from .auto_tune import AutoTuner
 from .trainer import SegmentationTrainer
+from .experiment_identity import ExperimentIdentity, generate_run_id
 
 __all__ = [
     "load_config",
@@ -21,5 +22,7 @@ __all__ = [
     "get_fallback_info",
     "EffectiveSettingsLogger",
     "AutoTuner",
-    "SegmentationTrainer"
+    "SegmentationTrainer",
+    "ExperimentIdentity",
+    "generate_run_id"
 ]

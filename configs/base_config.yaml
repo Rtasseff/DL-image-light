@@ -2,9 +2,9 @@
 project_name: "segmentation_experiment"
 task: "segmentation"
 
-# NO complexity flags in golden path
+# SDD v4.0 Golden Path - explicit settings
 use_fallbacks: false  # NEVER true in production
-validation_mode: null  # Auto-detected, not specified
+validation_mode: "strict"  # Explicit STRICT per SDD v4.0 Appendix A.1
 
 # Dataset configuration
 dataset:

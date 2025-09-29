@@ -217,4 +217,12 @@ class SegmentationTrainer:
         return self._trainer
 
 
+    @property
+    def logged_metrics(self) -> Dict[str, Any]:
+        """Expose logged metrics from the underlying Lightning trainer."""
+        if self._trainer is None:
+            return {}
+        return getattr(self._trainer, "logged_metrics", {})
+
+
 __all__ = ["SegmentationTrainer"]

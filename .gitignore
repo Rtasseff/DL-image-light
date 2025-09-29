@@ -66,6 +66,7 @@ wandb/
 mlruns/
 lightning_logs/
 *.log
+dependency_report.json
 
 # Data directories
 data/

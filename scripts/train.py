@@ -25,6 +25,9 @@ from pytorch_lightning.loggers import CSVLogger
 sys.path.append(str(Path(__file__).parent.parent / "src"))
 
 from src.core.config import load_and_validate_config
+from src.core.dependencies import validate_fallback_compatibility
+from src.core.trainer import SegmentationTrainer
+from src.core.experiment_identity import ExperimentIdentity
 from src.data.datamodule import SegmentationDataModule
 from src.models.lightning_module import SegmentationModel
 from src.utils.reproducibility import set_global_seed
@@ -100,37 +103,22 @@ def create_callbacks(config: Dict[str, Any], run_dir: Path) -> list:
     return callbacks
 
 
-def create_trainer(config: Dict[str, Any], run_dir: Path, callbacks: list) -> pl.Trainer:
+def create_sdd_trainer(config: Dict[str, Any], run_dir: Path) -> SegmentationTrainer:
     """
-    Create Lightning trainer from configuration.
+    Create SDD v4.0 compliant trainer wrapper.
 
     Args:
         config: Configuration dictionary
         run_dir: Run directory for outputs
-        callbacks: List of callbacks
 
     Returns:
-        Configured trainer
+        SDD-compliant trainer wrapper
     """
-    compute_config = config["compute"]
-
-    # Setup logger
-    csv_logger = CSVLogger(run_dir / "metrics", name="", version="")
-
-    trainer = pl.Trainer(
-        default_root_dir=run_dir,
-        max_epochs=config["training"]["epochs"],
-        accelerator=compute_config["accelerator"],
-        devices=compute_config["devices"],
-        precision=str(compute_config["precision"]),  # Convert to string for Lightning 2.0+
-        deterministic=compute_config["deterministic"],
-        callbacks=callbacks,
-        logger=csv_logger,
-        enable_progress_bar=True,
-        log_every_n_steps=10,
-        accumulate_grad_batches=config["training"].get("accumulate_grad_batches", 1),
-        enable_checkpointing=True,
-        enable_model_summary=True,
+    # Use SDD trainer wrapper per SDD v4.0 stable interface
+    trainer = SegmentationTrainer(
+        config=config,
+        run_dir=run_dir,
+        experiment_name=run_dir.name
     )
 
     return trainer
@@ -172,6 +160,9 @@ def main():
         # Load and validate configuration
         print(f"Loading configuration from: {args.config}")
         config = load_and_validate_config(args.config)
+
+        # SDD v4.0 Appendix A.2: Block STRICT+fallback combinations
+        validate_fallback_compatibility()
 
         # Setup experiment directory
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -218,34 +209,29 @@ def main():
         model = SegmentationModel(config)
         logger.info(model.get_model_summary())
 
-        # Create callbacks
-        callbacks = create_callbacks(config, run_dir)
+        # Capture experiment identity per SDD v4.0 Appendix A.3
+        logger.info("Capturing experiment identity...")
+        experiment_identity = ExperimentIdentity.capture(config, run_dir)
 
-        # Create trainer
-        logger.info("Initializing trainer...")
-        trainer = create_trainer(config, run_dir, callbacks)
+        # Create SDD trainer (handles callbacks internally)
+        logger.info("Initializing SDD trainer...")
+        trainer = create_sdd_trainer(config, run_dir)
 
-        # Override for fast dev run
+        # Note: fast_dev_run not supported in SDD wrapper yet
         if args.fast_dev_run:
-            trainer.fast_dev_run = True
-            logger.info("Running in fast dev run mode (1 batch)")
+            logger.warning("Fast dev run not supported with SDD trainer wrapper")
 
-        # Train model
+        # Train model using SDD stable interface
         logger.info("Starting training...")
         trainer.fit(
             model=model,
-            datamodule=datamodule,
-            ckpt_path=args.resume
+            datamodule=datamodule
         )
 
-        # Run final validation
+        # Run final validation using SDD interface
         if not args.fast_dev_run:
             logger.info("Running final validation...")
-            trainer.validate(
-                model=model,
-                datamodule=datamodule,
-                ckpt_path="best"
-            )
+            validation_results = trainer.validate(model, datamodule)
 
         logger.info(f"Training complete! Results saved to: {run_dir}")
 

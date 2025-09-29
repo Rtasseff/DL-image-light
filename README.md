@@ -15,8 +15,8 @@ cd DL-image-light
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Install dependencies
-pip install -r requirements.txt
+# Install Golden Path dependencies (pinned versions for reproducibility)
+pip install -r requirements/ml.txt
 ```
 
 ### Train Your First Model
@@ -182,9 +182,49 @@ Optimized for M1 MacBook:
 - **Multi-class Segmentation**: Extension beyond binary segmentation
 - **Real-time Inference**: Optimized deployment pipeline
 
+## 🔧 Troubleshooting
+
+### Installation Issues
+
+If you cannot install the full ML stack (`requirements/ml.txt`):
+
+```bash
+# For development/testing only (not for production)
+export USE_FALLBACKS=true
+export CONFIG_VALIDATION_MODE=PERMISSIVE
+pip install -r requirements/base.txt
+```
+
+⚠️ **Warning**: Never use fallbacks in production!
+
+### Other Installation Options
+
+```bash
+# Development with additional tools
+pip install -r requirements/dev.txt
+
+# All dependencies (includes everything)
+pip install -r requirements/all.txt
+
+# Check what's available
+python scripts/check_dependencies.py
+```
+
+### SDD v4.0 Compliance
+
+This project follows SDD v4.0 standards. For development:
+
+```bash
+# Enable permissive mode for development
+export CONFIG_VALIDATION_MODE=PERMISSIVE
+
+# Production always uses STRICT (default)
+unset CONFIG_VALIDATION_MODE
+```
+
 ## 🤝 Contributing
 
-This is a production-ready segmentation platform following clean architecture principles. All components are modular and extensible.
+This is a production-ready segmentation platform following SDD v4.0 clean architecture principles. All components are modular and extensible.
 
 ## 📄 License
 
