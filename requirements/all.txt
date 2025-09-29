@@ -1,0 +1,5 @@
+# Install everything (ml + dev dependencies)
+# Use this for complete development environment setup
+
+-r ml.txt
+-r dev.txt

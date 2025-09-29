@@ -53,6 +53,11 @@ class SegmentationDice(Metric):
         dice = (2.0 * self.intersection + self.smooth) / (self.union + self.smooth)
         return dice
 
+    def reset(self) -> None:
+        """Reset metric state."""
+        self.intersection = torch.tensor(0.0)
+        self.union = torch.tensor(0.0)
+
 
 class SegmentationIoU(Metric):
     """

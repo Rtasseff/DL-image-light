@@ -16,13 +16,18 @@ try:
         get_metric
     )
 
+    # Always import SDD-compliant interface
+    from .sdd_interface import SDDMetricsWrapper, create_sdd_metrics
+
     __all__ = [
         "SegmentationDice",
         "SegmentationIoU",
         "SegmentationPrecision",
         "SegmentationRecall",
         "SegmentationF1",
-        "get_metric"
+        "get_metric",
+        "SDDMetricsWrapper",
+        "create_sdd_metrics"
     ]
 
 except ImportError:
@@ -47,10 +52,15 @@ except ImportError:
             raise ValueError(f"Unknown metric: {metric_type}")
         return metric_map[metric_type]
 
+    # Import SDD-compliant interface too
+    from .sdd_interface import SDDMetricsWrapper, create_sdd_metrics
+
     __all__ = [
         "compute_iou",
         "compute_precision",
         "compute_recall",
         "compute_dice",
-        "get_metric"
+        "get_metric",
+        "SDDMetricsWrapper",
+        "create_sdd_metrics"
     ]

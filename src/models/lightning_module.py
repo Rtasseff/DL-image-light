@@ -204,11 +204,55 @@ class SegmentationModel(pl.LightningModule):
         else:
             images = batch
 
-        # Forward pass
-        logits = self(images)
-        preds = torch.sigmoid(logits)
+        # Use SDD-compliant prediction method
+        return self.predict(images, strategy="standard")
 
-        return preds
+    def predict(self, x: torch.Tensor, strategy: str = "standard") -> torch.Tensor:
+        """
+        SDD v4.0 compliant prediction method.
+
+        Args:
+            x: Input tensor [B, C, H, W]
+            strategy: Prediction strategy ("standard", "tta_hflip", "tta_vflip")
+
+        Returns:
+            Predictions with same spatial dims as input
+
+        Raises:
+            ValueError: If strategy is unknown
+        """
+        PREDICTION_STRATEGIES = {
+            'standard': 'Single forward pass',
+            'tta_hflip': 'Horizontal flip test-time augmentation',
+            'tta_vflip': 'Vertical flip test-time augmentation'
+        }
+
+        if strategy not in PREDICTION_STRATEGIES:
+            raise ValueError(
+                f"Unknown strategy: {strategy}. "
+                f"Available: {list(PREDICTION_STRATEGIES.keys())}"
+            )
+
+        if strategy == "standard":
+            # Standard single forward pass
+            logits = self.forward(x)
+            return torch.sigmoid(logits)
+
+        elif strategy == "tta_hflip":
+            # Test-time augmentation with horizontal flip
+            logits_orig = self.forward(x)
+            logits_flip = self.forward(torch.flip(x, dims=[3]))  # Flip width
+            logits_flip = torch.flip(logits_flip, dims=[3])      # Flip back
+            logits = (logits_orig + logits_flip) / 2
+            return torch.sigmoid(logits)
+
+        elif strategy == "tta_vflip":
+            # Test-time augmentation with vertical flip
+            logits_orig = self.forward(x)
+            logits_flip = self.forward(torch.flip(x, dims=[2]))  # Flip height
+            logits_flip = torch.flip(logits_flip, dims=[2])      # Flip back
+            logits = (logits_orig + logits_flip) / 2
+            return torch.sigmoid(logits)
 
     def configure_optimizers(self):
         """Configure optimizer and learning rate scheduler."""

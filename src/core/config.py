@@ -3,13 +3,47 @@ Configuration validation and loading with Pydantic.
 
 This module provides type-safe configuration loading and validation
 using Pydantic models to ensure all required parameters are present
-and correctly typed.
+and correctly typed. Implements SDD v4.0 validation modes.
 """
 
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Union, Any
+from enum import Enum
 import yaml
 from pydantic import BaseModel, Field, validator
+
+
+class ValidationMode(Enum):
+    """Configuration validation modes per SDD v4.0."""
+    STRICT = "strict"      # Full validation, no missing fields
+    PERMISSIVE = "permissive"  # Warnings on issues, fills defaults
+    MINIMAL = "minimal"    # Only essential fields required
+
+
+def get_validation_mode() -> ValidationMode:
+    """
+    Get validation mode based on environment.
+
+    Returns:
+        ValidationMode: Auto-detected or explicitly set mode
+    """
+    # Explicit override takes precedence
+    if mode := os.environ.get('CONFIG_VALIDATION_MODE'):
+        return ValidationMode(mode.lower())
+
+    # CI environment detection
+    if os.environ.get('CI'):
+        if 'unit' in os.environ.get('TEST_SUITE', ''):
+            return ValidationMode.MINIMAL
+        return ValidationMode.STRICT
+
+    # Local development detection
+    if os.environ.get('USER'):  # Local machine
+        return ValidationMode.PERMISSIVE
+
+    # Default to STRICT for safety
+    return ValidationMode.STRICT
 
 
 class SplitConfig(BaseModel):
@@ -109,10 +143,28 @@ class LoggingConfig(BaseModel):
     save_tensorboard: bool = Field(default=False, description="Save TensorBoard logs")
 
 
+class ResourcesConfig(BaseModel):
+    """Configuration for resource management (SDD v4.0)."""
+    auto_tune: bool = Field(default=False, description="Enable auto-tuning")
+    log_effective_settings: bool = Field(default=True, description="Log effective settings")
+
+
+class VisualizationConfig(BaseModel):
+    """Configuration for visualization (SDD v4.0)."""
+    mode: str = Field(default="simple", description="Visualization mode: simple, detailed")
+    overlay_alpha: float = Field(default=0.3, ge=0.0, le=1.0, description="Overlay transparency")
+    overlay_colormap: str = Field(default="viridis", description="Overlay colormap")
+
+
 class Config(BaseModel):
-    """Main configuration class."""
+    """Main configuration class with SDD v4.0 support."""
     project_name: str = Field(description="Project name")
     task: str = Field(default="segmentation", description="Task type: segmentation")
+
+    # SDD v4.0 specific fields
+    use_fallbacks: Optional[bool] = Field(default=False, description="Use fallback implementations")
+    validation_mode: Optional[str] = Field(default=None, description="Config validation mode")
+
     dataset: DatasetConfig = Field(description="Dataset configuration")
     model: ModelConfig = Field(description="Model configuration")
     training: TrainingConfig = Field(description="Training configuration")
@@ -120,6 +172,10 @@ class Config(BaseModel):
     output: OutputConfig = Field(default_factory=OutputConfig, description="Output configuration")
     compute: ComputeConfig = Field(default_factory=ComputeConfig, description="Compute configuration")
     logging: LoggingConfig = Field(default_factory=LoggingConfig, description="Logging configuration")
+
+    # SDD v4.0 specific configs
+    resources: ResourcesConfig = Field(default_factory=ResourcesConfig, description="Resource management")
+    visualization: VisualizationConfig = Field(default_factory=VisualizationConfig, description="Visualization settings")
 
     @validator("task")
     def validate_task(cls, v):

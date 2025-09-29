@@ -1,6 +1,10 @@
-# Base configuration for segmentation platform
-project_name: "segmentation_platform"
+# Golden Path configuration for segmentation platform
+project_name: "segmentation_experiment"
 task: "segmentation"
+
+# NO complexity flags in golden path
+use_fallbacks: false  # NEVER true in production
+validation_mode: null  # Auto-detected, not specified
 
 # Dataset configuration
 dataset:
@@ -36,12 +40,13 @@ training:
     type: "dice"
     params:
       smooth: 1.0
-  metrics:
-    - "dice"
-    - "iou"
-    - "precision"
-    - "recall"
+  metrics: ["dice", "iou"]
   accumulate_grad_batches: 1
+
+# Resource management OFF by default
+resources:
+  auto_tune: false  # Must explicitly enable
+  log_effective_settings: true  # Always log what ran
 
 # Augmentations
 augmentations:
@@ -68,6 +73,12 @@ output:
     monitor: "val_loss"
     mode: "min"
     save_best_only: true
+
+# Simple visualization defaults
+visualization:
+  mode: "simple"  # Not "detailed" by default
+  overlay_alpha: 0.3
+  overlay_colormap: "viridis"
 
 # Compute settings
 compute:
