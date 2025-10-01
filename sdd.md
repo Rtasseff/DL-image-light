@@ -1,12 +1,18 @@
 # Image Segmentation Platform — Software Design Document
-*Version:* 4.0  
-*Date:* 2025-01-16  
+*Version:* 4.1  
+*Date:* 2025-01-20  
 *Status:* Production-Ready with Golden Path
 
 ## Executive Summary
 Build a **production-ready** segmentation platform with a **clear golden path** and **optional safety nets**. Based on implementation experience through Week 2 and architectural review.
 
-**Key Principles in v4.0:**
+Version 4.1 tightens policy around reuse: model construction now lives in
+`src/models/factory.build_model`, Lightning modules accept pre-built
+networks, and checkpoint configuration is centralized in
+`src/core/checkpoints.build_checkpoint_callback` to eliminate drift between
+scripts and library code.
+
+**Key Principles in v4.1:**
 - **One Golden Path** - SMP + Lightning + Full dependencies + STRICT validation
 - **Gated Complexity** - Fallbacks and auto-tuning are opt-in only
 - **Explicit Over Magic** - All automatic behaviors must be logged
@@ -103,7 +109,7 @@ pydantic>=2.0.0
 ### 4.1 DataModule Contract
 ```python
 class DataModule(Protocol):
-    """Stable API v4.0 - v5.0"""
+    """Stable API v4.1 - v5.0"""
     def setup(self, stage: str) -> None: ...
     def train_dataloader(self) -> DataLoader: ...
     def val_dataloader(self) -> DataLoader: ...
@@ -113,7 +119,7 @@ class DataModule(Protocol):
 ### 4.2 Model Contract  
 ```python
 class Model(nn.Module):
-    """Stable API v4.0 - v5.0"""
+    """Stable API v4.1 - v5.0"""
     def forward(self, x: Tensor) -> Tensor: ...
     def predict_step(self, x: Tensor, strategy: str = "standard") -> Tensor: ...
 ```
@@ -121,14 +127,14 @@ class Model(nn.Module):
 ### 4.3 Loss Contract
 ```python
 class Loss(Protocol):
-    """Stable API v4.0 - v5.0"""
+    """Stable API v4.1 - v5.0"""
     def __call__(self, pred: Tensor, target: Tensor, **kwargs) -> Tensor: ...
 ```
 
 ### 4.4 Metrics Contract
 ```python
 class Metrics(Protocol):
-    """Stable API v4.0 - v5.0"""
+    """Stable API v4.1 - v5.0"""
     def update(self, pred: Tensor, target: Tensor) -> None: ...
     def compute(self) -> Dict[str, Tensor]: ...
     def reset(self) -> None: ...
@@ -137,11 +143,29 @@ class Metrics(Protocol):
 ### 4.5 Trainer Contract
 ```python
 class Trainer(Protocol):
-    """Stable API v4.0 - v5.0"""
+    """Stable API v4.1 - v5.0"""
     def fit(self, model, datamodule, callbacks=None) -> None: ...
     def validate(self, model, datamodule) -> List[Dict]: ...
     def test(self, model, datamodule) -> List[Dict]: ...
 ```
+
+### 4.6 Construction Factories
+- All model construction routes through `src/models/factory.build_model(cfg)`.
+- Lightning modules never instantiate networks internally—`SegmentationModel`
+  receives an already built `nn.Module` along with configuration state.
+- Workflow scripts call the factory and then wrap the result; they must not
+  import `segmentation_models_pytorch` or assemble losses/metrics directly.
+- Checkpoint policy is centralized in `src/core/checkpoints.build_checkpoint_callback`
+  so every trainer instance receives a single, consistent `ModelCheckpoint`.
+
+**Acceptance Checklist**
+- `scripts/train.py` (and peers) contain no references to
+  `segmentation_models_pytorch`.
+- Exactly one `ModelCheckpoint` callback is attached to any trainer instance.
+- Configs use `model.out_channels`; changing encoder/architecture is a config
+  change only.
+- `tests/unit/test_model_factory.py` and
+  `tests/unit/test_scripts_imports.py` pass in CI.
 
 ## 5. Configuration Policy
 
@@ -187,7 +211,7 @@ task: "segmentation"
 
 # NO complexity flags in golden path
 use_fallbacks: false  # NEVER true in production
-validation_mode: null  # Auto-detected, not specified
+validation_mode: "strict"  # Explicit strict mode per SDD v4.1
 
 dataset:
   images_dir: "./data/images"
@@ -201,7 +225,7 @@ model:
   architecture: "Unet"
   encoder: "resnet34"
   encoder_weights: "imagenet"
-  classes: 1
+  out_channels: 1
 
 training:
   epochs: 50
@@ -548,17 +572,23 @@ segmentation-platform/
 │   │   ├── config.py            # Validation with auto-detection
 │   │   ├── dependencies.py      # Fallback control
 │   │   ├── effective_settings.py # Log what actually ran
+│   │   ├── checkpoints.py       # Single source for ModelCheckpoint
 │   │   ├── trainer.py           # Lightning wrapper
 │   │   └── auto_tune.py         # Opt-in auto-tuning
 │   │
 │   ├── models/                  # Golden path models
-│   │   ├── segmentation.py      # SMP models only
-│   │   └── lightning_module.py
+│   │   ├── factory.py           # Builds SMP/custom models from config
+│   │   └── lightning_module.py  # Wraps provided models for training
 │   │
 │   ├── testing/                 # Quarantined test helpers
 │   │   ├── simple_metrics.py    # Fallback metrics
 │   │   ├── simple_unet.py       # Fallback model
 │   │   └── fixtures.py          # Test data
+│   │
+│   ├── utils/
+│   │   ├── environment.py       # Dependency/environment capture
+│   │   ├── logging.py           # Logging helpers
+│   │   └── reproducibility.py   # Seed management
 │   │
 │   └── [other modules...]
 │
@@ -915,24 +945,29 @@ clean:
 
 ## 15. Version History & Migration
 
-### Version 4.0 Changes from v3.0
-- **Golden Path Definition**: Clear primary workflow
-- **Gated Complexity**: Fallbacks/auto-tuning off by default
-- **Effective Settings Logging**: Track all deviations
-- **Simplified Testing**: Three clear tiers
-- **Pinned Dependencies**: Exact versions in ml.txt
-- **External CV**: K-fold orchestration outside trainer
+### Version 4.1 Changes from v4.0
+- **Model Factory**: `src/models/factory.build_model` is the only place that
+  constructs segmentation networks (SMP or custom).
+- **Lightning Wrapper**: `SegmentationModel` now accepts an instantiated
+  `nn.Module`; it no longer builds models internally.
+- **Checkpoint Factory**: `src/core/checkpoints.build_checkpoint_callback`
+  defines the sole `ModelCheckpoint` instance attached to trainers.
+- **Config Update**: `model.out_channels` replaces the old `classes` field and
+  drives the factory output.
+- **Script Simplification**: Workflow scripts call factories and never import
+  `segmentation_models_pytorch` directly.
 
-### Migration from v3.0
-1. Update configs to set `use_fallbacks: false`
-2. Update configs to set `auto_tune: false`  
-3. Pin dependencies with `pip freeze > requirements/ml.txt`
-4. Move fallback implementations to `src/testing/`
-5. Add effective settings logging to training scripts
+### Migration from v4.0
+1. Replace any direct SMP construction with calls to `build_model(cfg)`.
+2. Pass the factory output into `SegmentationModel(cfg, model)`.
+3. Remove duplicate checkpoint creation and use `build_checkpoint_callback`.
+4. Rename `model.classes` → `model.out_channels` in all configs and tests.
+5. Verify the new tests (`tests/unit/test_model_factory.py`,
+   `tests/unit/test_scripts_imports.py`) pass.
 
 ## 16. Conclusion
 
-This Software Design Document v4.0 provides a **production-ready platform** with:
+This Software Design Document v4.1 provides a **production-ready platform** with:
 
 1. **Clear Golden Path** - One way that works for 90% of cases
 2. **Gated Complexity** - Advanced features available but opt-in

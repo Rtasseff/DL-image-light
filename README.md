@@ -210,9 +210,9 @@ pip install -r requirements/all.txt
 python scripts/check_dependencies.py
 ```
 
-### SDD v4.0 Compliance
+### SDD v4.1 Compliance
 
-This project follows SDD v4.0 standards. For development:
+This project follows SDD v4.1 standards. For development:
 
 ```bash
 # Enable permissive mode for development
@@ -224,7 +224,7 @@ unset CONFIG_VALIDATION_MODE
 
 ## 🤝 Contributing
 
-This is a production-ready segmentation platform following SDD v4.0 clean architecture principles. All components are modular and extensible.
+This is a production-ready segmentation platform following SDD v4.1 clean architecture principles. All components are modular and extensible.
 
 ## 📄 License
 

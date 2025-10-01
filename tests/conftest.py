@@ -69,7 +69,7 @@ def test_config(dummy_dataset):
             "encoder": "resnet34",
             "encoder_weights": "imagenet",
             "in_channels": 3,
-            "classes": 1
+            "out_channels": 1
         },
         "training": {
             "epochs": 2,

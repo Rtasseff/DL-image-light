@@ -2,11 +2,14 @@
 Unit tests for configuration system.
 """
 
-import pytest
 import tempfile
 from pathlib import Path
 import yaml
 from pydantic import ValidationError
+
+import pytest
+
+pytest.importorskip("pytorch_lightning")
 
 from src.core.config import load_config, load_and_validate_config, Config
 
@@ -32,7 +35,7 @@ class TestConfigValidation:
             "model": {
                 "architecture": "Unet",
                 "encoder": "resnet34",
-                "classes": 1
+                "out_channels": 1
             },
             "training": {
                 "epochs": 10,
@@ -167,7 +170,7 @@ class TestConfigValidation:
             # Check defaults
             assert config["task"] == "segmentation"
             assert config["model"]["in_channels"] == 3
-            assert config["model"]["classes"] == 1
+            assert config["model"]["out_channels"] == 1
             assert config["training"]["batch_size"] == 8
             assert config["training"]["optimizer"] == "adamw"
             assert config["compute"]["accelerator"] == "auto"

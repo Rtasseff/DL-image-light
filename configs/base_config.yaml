@@ -2,9 +2,9 @@
 project_name: "segmentation_experiment"
 task: "segmentation"
 
-# SDD v4.0 Golden Path - explicit settings
+# SDD v4.1 Golden Path - explicit settings
 use_fallbacks: false  # NEVER true in production
-validation_mode: "strict"  # Explicit STRICT per SDD v4.0 Appendix A.1
+validation_mode: "strict"  # Explicit STRICT per SDD v4.1 Appendix A.1
 
 # Dataset configuration
 dataset:
@@ -24,7 +24,7 @@ model:
   encoder: "resnet34"
   encoder_weights: "imagenet"
   in_channels: 3
-  classes: 1
+  out_channels: 1
 
 # Training configuration
 training:

@@ -13,13 +13,6 @@ from datetime import datetime
 from typing import Dict, Any
 
 import yaml
-import pytorch_lightning as pl
-from pytorch_lightning.callbacks import (
-    ModelCheckpoint,
-    EarlyStopping,
-    LearningRateMonitor
-)
-from pytorch_lightning.loggers import CSVLogger
 
 # Add src to path for imports
 sys.path.append(str(Path(__file__).parent.parent / "src"))
@@ -29,83 +22,24 @@ from src.core.dependencies import validate_fallback_compatibility
 from src.core.trainer import SegmentationTrainer
 from src.core.experiment_identity import ExperimentIdentity
 from src.data.datamodule import SegmentationDataModule
+from src.models.factory import build_model
 from src.models.lightning_module import SegmentationModel
 from src.utils.reproducibility import set_global_seed
 from src.utils.logging import setup_logging, get_logger
+from src.utils.environment import collect_environment_info
 
 
 def save_environment_info(output_path: Path) -> None:
     """Save environment information for reproducibility."""
-    import torch
-    import torchvision
-    import segmentation_models_pytorch as smp
-    import pytorch_lightning as pl_version
-    import albumentations as A
-
-    env_info = {
-        "python": sys.version,
-        "pytorch": torch.__version__,
-        "torchvision": torchvision.__version__,
-        "lightning": pl_version.__version__,
-        "smp": smp.__version__,
-        "albumentations": A.__version__,
-        "cuda_available": torch.cuda.is_available(),
-        "cuda_version": torch.version.cuda if torch.cuda.is_available() else None,
-        "device_count": torch.cuda.device_count() if torch.cuda.is_available() else 0,
-        "mps_available": torch.backends.mps.is_available() if hasattr(torch.backends, 'mps') else False,
-    }
+    env_info = collect_environment_info()
 
     with open(output_path, "w") as f:
         json.dump(env_info, f, indent=2)
 
 
-def create_callbacks(config: Dict[str, Any], run_dir: Path) -> list:
-    """
-    Create Lightning callbacks from configuration.
-
-    Args:
-        config: Configuration dictionary
-        run_dir: Run directory for outputs
-
-    Returns:
-        List of callbacks
-    """
-    callbacks = []
-
-    # Model checkpoint callback
-    checkpoint_config = config["output"]["checkpoint"]
-    callbacks.append(
-        ModelCheckpoint(
-            dirpath=run_dir / "checkpoints",
-            filename="best",
-            monitor=checkpoint_config["monitor"],
-            mode=checkpoint_config["mode"],
-            save_top_k=1,
-            verbose=True
-        )
-    )
-
-    # Learning rate monitor
-    callbacks.append(LearningRateMonitor(logging_interval="epoch"))
-
-    # Early stopping if configured
-    if "early_stopping" in config["training"]:
-        early_stopping_config = config["training"]["early_stopping"]
-        callbacks.append(
-            EarlyStopping(
-                monitor=early_stopping_config["monitor"],
-                patience=early_stopping_config["patience"],
-                mode=early_stopping_config["mode"],
-                verbose=True
-            )
-        )
-
-    return callbacks
-
-
 def create_sdd_trainer(config: Dict[str, Any], run_dir: Path) -> SegmentationTrainer:
     """
-    Create SDD v4.0 compliant trainer wrapper.
+    Create SDD v4.1 compliant trainer wrapper.
 
     Args:
         config: Configuration dictionary
@@ -114,7 +48,7 @@ def create_sdd_trainer(config: Dict[str, Any], run_dir: Path) -> SegmentationTra
     Returns:
         SDD-compliant trainer wrapper
     """
-    # Use SDD trainer wrapper per SDD v4.0 stable interface
+    # Use SDD trainer wrapper per SDD v4.1 stable interface
     trainer = SegmentationTrainer(
         config=config,
         run_dir=run_dir,
@@ -161,7 +95,7 @@ def main():
         print(f"Loading configuration from: {args.config}")
         config = load_and_validate_config(args.config)
 
-        # SDD v4.0 Appendix A.2: Block STRICT+fallback combinations
+        # SDD v4.1 Appendix A.2: Block STRICT+fallback combinations
         validate_fallback_compatibility()
 
         # Setup experiment directory
@@ -206,10 +140,11 @@ def main():
 
         # Create model
         logger.info("Creating model...")
-        model = SegmentationModel(config)
+        backbone = build_model(config)
+        model = SegmentationModel(config, model=backbone)
         logger.info(model.get_model_summary())
 
-        # Capture experiment identity per SDD v4.0 Appendix A.3
+        # Capture experiment identity per SDD v4.1 Appendix A.3
         logger.info("Capturing experiment identity...")
         experiment_identity = ExperimentIdentity.capture(config, run_dir)
 

@@ -1,4 +1,4 @@
-"""Core platform utilities for SDD v4.0 compliance."""
+"""Core platform utilities for SDD v4.1 compliance."""
 
 from .config import load_config, ValidationMode, get_validation_mode
 from .dependencies import (

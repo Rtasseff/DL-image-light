@@ -1,5 +1,5 @@
 """
-SDD v4.0 compliant metrics interface.
+SDD v4.1 compliant metrics interface.
 
 This module provides a wrapper that ensures metrics conform to the
 SDD Metrics contract: compute() -> Dict[str, Tensor]
@@ -20,7 +20,7 @@ from .segmentation import (
 
 class SDDMetricsWrapper:
     """
-    SDD v4.0 compliant metrics wrapper.
+    SDD v4.1 compliant metrics wrapper.
 
     This class implements the stable Metrics interface contract:
     - update(pred: Tensor, target: Tensor) -> None

@@ -20,7 +20,7 @@ model:
   encoder: "resnet34"
   encoder_weights: "imagenet"
   in_channels: 3
-  classes: 1
+  out_channels: 1
 
 # Training configuration
 training:

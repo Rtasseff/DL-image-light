@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Comprehensive dependency checker for SDD v4.0 compliance.
+Comprehensive dependency checker for SDD v4.1 compliance.
 
 This tool verifies Golden Path dependencies and provides recommendations
-for fixing dependency issues. Implements SDD v4.0 diagnostic requirements.
+for fixing dependency issues. Implements SDD v4.1 diagnostic requirements.
 """
 
 import os
@@ -173,7 +173,7 @@ def check_platform() -> Dict[str, any]:
 
 
 def check_environment() -> Dict[str, str]:
-    """Check SDD v4.0 relevant environment variables."""
+    """Check SDD v4.1 relevant environment variables."""
     print("\n🌍 Environment Configuration:")
     print("-" * 50)
 
@@ -239,7 +239,7 @@ def provide_recommendations(golden_ok: bool, base_ok: bool, platform_info: Dict)
 
 def main():
     """Run comprehensive diagnostic."""
-    print("\n🔍 SDD v4.0 Dependency Diagnostic Report")
+    print("\n🔍 SDD v4.1 Dependency Diagnostic Report")
     print("=" * 60)
     print(f"Timestamp: {datetime.now().isoformat()}")
     print(f"Working Directory: {Path.cwd()}")
@@ -284,7 +284,7 @@ def main():
 
     # Exit with appropriate code
     if golden_path_ok:
-        print("\n🎉 System ready for SDD v4.0 Golden Path!")
+        print("\n🎉 System ready for SDD v4.1 Golden Path!")
         sys.exit(0)
     else:
         print(f"\n⚠️  System not ready for Golden Path. See recommendations above.")

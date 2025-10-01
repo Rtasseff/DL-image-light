@@ -1,5 +1,5 @@
 """
-SDD v4.0 compliant Trainer wrapper.
+SDD v4.1 compliant Trainer wrapper.
 
 This module provides a stable Trainer interface that wraps PyTorch Lightning
 while maintaining the SDD contract stability through version changes.
@@ -8,12 +8,13 @@ while maintaining the SDD contract stability through version changes.
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Union
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
+from pytorch_lightning.callbacks import EarlyStopping
 from pytorch_lightning.loggers import TensorBoardLogger
 
 from .effective_settings import EffectiveSettingsLogger
 from .auto_tune import AutoTuner
 from .config import ValidationMode, get_validation_mode
+from .checkpoints import build_checkpoint_callback
 from ..utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -21,7 +22,7 @@ logger = get_logger(__name__)
 
 class SegmentationTrainer:
     """
-    SDD v4.0 compliant trainer wrapper.
+    SDD v4.1 compliant trainer wrapper.
 
     This class implements the stable Trainer interface contract:
     - fit(model, datamodule, callbacks=None) -> None
@@ -147,16 +148,24 @@ class SegmentationTrainer:
         trainer_callbacks = []
 
         if mode == 'fit':
-            # Add checkpointing
-            checkpoint_config = self.config.get('output', {}).get('checkpoint', {})
-            checkpoint_callback = ModelCheckpoint(
-                dirpath=self.run_dir / "checkpoints",
-                monitor=checkpoint_config.get('monitor', 'val_loss'),
-                mode=checkpoint_config.get('mode', 'min'),
-                save_top_k=1 if checkpoint_config.get('save_best_only', True) else -1,
-                filename='best'
-            )
+            checkpoint_callback = build_checkpoint_callback(self.config, self.run_dir)
             trainer_callbacks.append(checkpoint_callback)
+            self.settings_logger.log_setting(
+                'checkpoint.monitor',
+                self.config['output']['checkpoint']['monitor'],
+                checkpoint_callback.monitor,
+            )
+            self.settings_logger.log_setting(
+                'checkpoint.dirpath',
+                str((self.run_dir / "checkpoints").resolve()),
+                str(Path(checkpoint_callback.dirpath).resolve()),
+            )
+            self.settings_logger.log_setting(
+                'checkpoint.save_top_k',
+                1 if self.config['output']['checkpoint'].get('save_best_only', True)
+                else self.config['output']['checkpoint'].get('save_top_k', -1),
+                checkpoint_callback.save_top_k,
+            )
 
             # Add early stopping if configured
             if 'early_stopping' in training_config:

@@ -1,7 +1,7 @@
 """
 Dependency management and fallback control.
 
-This module implements the SDD v4.0 fallback policy with explicit control
+This module implements the SDD v4.1 fallback policy with explicit control
 over when fallback implementations are used.
 """
 

@@ -3,9 +3,9 @@
 ## **CRITICAL: Always Check SDD Document First**
 
 **BEFORE starting any work**, ALWAYS read the current SDD document:
-- **sdd.md** - Contains the complete SDD v4.0 specification
+- **sdd.md** - Contains the complete SDD v4.1 specification
 - This document defines ALL requirements, architecture, and policies
-- Any work must comply with SDD v4.0 standards
+- Any work must comply with SDD v4.1 standards
 - If there's any conflict between instructions, the SDD takes precedence
 
 ## Virtual Environment Usage
@@ -66,9 +66,9 @@ python
 └── CLAUDE.md               # This file
 ```
 
-## SDD v4.0 Compliance
+## SDD v4.1 Compliance
 
-This project follows SDD v4.0 standards - **READ sdd.md FOR COMPLETE DETAILS**:
+This project follows SDD v4.1 standards - **READ sdd.md FOR COMPLETE DETAILS**:
 
 ### Key Principles
 - **Golden Path**: SMP + Lightning + Full dependencies + STRICT validation
@@ -104,7 +104,7 @@ export CONFIG_VALIDATION_MODE=STRICT|PERMISSIVE|MINIMAL
 
 ```bash
 # Run SDD compliance tests
-source venv/bin/activate && python -c "from src.core import load_config; print('SDD v4.0 compliant')"
+source venv/bin/activate && python -c "from src.core import load_config; print('SDD v4.1 compliant')"
 
 # Run training
 source venv/bin/activate && python scripts/train.py --config configs/base_config.yaml
@@ -134,12 +134,12 @@ export CONFIG_VALIDATION_MODE=PERMISSIVE
 
 ### SDD Compliance Testing
 ```bash
-# Run the complete SDD v4.0 compliance test
+# Run the complete SDD v4.1 compliance test
 source venv/bin/activate && python -c "
 from src.core import load_config, should_use_fallbacks, get_validation_mode
 from src.metrics import create_sdd_metrics
 from src.models.lightning_module import SegmentationModel
-print('✅ SDD v4.0 compliant!')
+print('✅ SDD v4.1 compliant!')
 "
 ```
 

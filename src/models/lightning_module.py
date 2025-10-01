@@ -1,15 +1,14 @@
 """
 PyTorch Lightning module for segmentation.
 
-This module encapsulates the model, loss, metrics, and training logic
-in a reusable Lightning module that handles all aspects of training.
+This module encapsulates the loss, metrics, and training logic
+around an externally provided segmentation model.
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
-import segmentation_models_pytorch as smp
 
 from ..losses import get_loss
 from ..metrics import get_metric
@@ -22,20 +21,23 @@ class SegmentationModel(pl.LightningModule):
     """
     Lightning module for segmentation tasks.
 
-    This class wraps an SMP model with Lightning training logic,
-    handling loss computation, metric tracking, and optimization.
+    This class wraps a ready-made segmentation model with Lightning
+    training logic, handling loss computation, metric tracking, and
+    optimization.
 
     Args:
         config: Configuration dictionary containing model, training,
                 and loss specifications
+        model: Instantiated segmentation model (e.g., SMP Unet)
 
     Example:
         >>> config = load_config("configs/drive.yaml")
-        >>> model = SegmentationModel(config)
+        >>> backbone = build_model(config)
+        >>> model = SegmentationModel(config, backbone)
         >>> trainer.fit(model, datamodule)
     """
 
-    def __init__(self, config: Dict[str, Any]):
+    def __init__(self, config: Dict[str, Any], model: nn.Module):
         super().__init__()
         self.config = config
         self.save_hyperparameters(config)
@@ -44,8 +46,8 @@ class SegmentationModel(pl.LightningModule):
         self.model_config = config["model"]
         self.training_config = config["training"]
 
-        # Create model from SMP
-        self.model = self._create_model()
+        # Use externally provided model (e.g., from factory)
+        self.model = model
 
         # Setup loss function
         self.loss_fn = self._create_loss()
@@ -60,28 +62,12 @@ class SegmentationModel(pl.LightningModule):
         self.weight_decay = self.training_config.get("weight_decay", 1e-4)
         self.scheduler_config = self.training_config.get("scheduler")
 
-        logger.info(f"Created {self.model_config['architecture']} model with "
-                   f"{self.model_config['encoder']} encoder")
-
-    def _create_model(self) -> nn.Module:
-        """Create SMP model from configuration."""
-        architecture = self.model_config["architecture"]
-
-        # Get the model class from SMP
-        if hasattr(smp, architecture):
-            model_class = getattr(smp, architecture)
-        else:
-            raise ValueError(f"Unknown architecture: {architecture}")
-
-        # Create model with configuration
-        model = model_class(
-            encoder_name=self.model_config["encoder"],
-            encoder_weights=self.model_config.get("encoder_weights", "imagenet"),
-            in_channels=self.model_config.get("in_channels", 3),
-            classes=self.model_config.get("classes", 1),
+        encoder = self.model_config.get("encoder", "n/a")
+        logger.info(
+            "Attached model %s (encoder=%s)",
+            self.model_config["architecture"],
+            encoder,
         )
-
-        return model
 
     def _create_loss(self) -> nn.Module:
         """Create loss function from configuration."""
@@ -209,7 +195,7 @@ class SegmentationModel(pl.LightningModule):
 
     def predict(self, x: torch.Tensor, strategy: str = "standard") -> torch.Tensor:
         """
-        SDD v4.0 compliant prediction method.
+        SDD v4.1 compliant prediction method.
 
         Args:
             x: Input tensor [B, C, H, W]
@@ -348,9 +334,9 @@ class SegmentationModel(pl.LightningModule):
         summary = f"""
 Model Summary:
 - Architecture: {self.model_config['architecture']}
-- Encoder: {self.model_config['encoder']}
+- Encoder: {self.model_config.get('encoder', 'n/a')}
 - Input channels: {self.model_config.get('in_channels', 3)}
-- Output classes: {self.model_config.get('classes', 1)}
+- Output channels: {self.model_config.get('out_channels', 1)}
 - Total parameters: {total_params:,}
 - Trainable parameters: {trainable_params:,}
 - Loss function: {self.training_config['loss']['type']}

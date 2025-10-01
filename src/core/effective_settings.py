@@ -1,5 +1,5 @@
 """
-Effective Settings Logging for SDD v4.0 compliance.
+Effective Settings Logging for SDD v4.1 compliance.
 
 This module tracks and logs actual vs requested settings to ensure
 transparency in what the system actually does vs what was requested.
@@ -16,7 +16,7 @@ class EffectiveSettingsLogger:
     """
     Track and log actual vs requested settings.
 
-    This class implements the SDD v4.0 requirement that all automatic
+    This class implements the SDD v4.1 requirement that all automatic
     behaviors must be logged and deviations from requested settings
     must be explicitly tracked.
     """

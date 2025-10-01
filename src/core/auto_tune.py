@@ -1,5 +1,5 @@
 """
-Auto-tuning with safety gates for SDD v4.0 compliance.
+Auto-tuning with safety gates for SDD v4.1 compliance.
 
 This module provides opt-in auto-tuning functionality that is disabled
 by default and logs all changes made to requested settings.
@@ -17,7 +17,7 @@ class AutoTuner:
     """
     Auto-tune settings when explicitly requested.
 
-    This class implements the SDD v4.0 auto-tuning policy:
+    This class implements the SDD v4.1 auto-tuning policy:
     - Disabled by default
     - Opt-in only
     - Safety gates prevent use in STRICT mode

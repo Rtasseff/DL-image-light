@@ -3,7 +3,7 @@ Configuration validation and loading with Pydantic.
 
 This module provides type-safe configuration loading and validation
 using Pydantic models to ensure all required parameters are present
-and correctly typed. Implements SDD v4.0 validation modes.
+and correctly typed. Implements SDD v4.1 validation modes.
 """
 
 import os
@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field, validator
 
 
 class ValidationMode(Enum):
-    """Configuration validation modes per SDD v4.0."""
+    """Configuration validation modes per SDD v4.1."""
     STRICT = "strict"      # Full validation, no missing fields
     PERMISSIVE = "permissive"  # Warnings on issues, fills defaults
     MINIMAL = "minimal"    # Only essential fields required
@@ -23,9 +23,9 @@ class ValidationMode(Enum):
 
 def get_validation_mode() -> ValidationMode:
     """
-    Get validation mode - defaults to STRICT per SDD v4.0 Appendix A.1.
+    Get validation mode - defaults to STRICT per SDD v4.1 Appendix A.1.
 
-    SDD v4.0 mandates STRICT by default for safety. Must explicitly
+    SDD v4.1 mandates STRICT by default for safety. Must explicitly
     request PERMISSIVE mode for development.
 
     Returns:
@@ -35,7 +35,7 @@ def get_validation_mode() -> ValidationMode:
     if mode := os.environ.get('CONFIG_VALIDATION_MODE'):
         return ValidationMode(mode.lower())
 
-    # Default to STRICT - must explicitly loosen per SDD v4.0
+    # Default to STRICT - must explicitly loosen per SDD v4.1
     return ValidationMode.STRICT
 
 
@@ -62,7 +62,7 @@ class ModelConfig(BaseModel):
     encoder: str = Field(default="resnet34", description="Encoder backbone")
     encoder_weights: Optional[str] = Field(default="imagenet", description="Encoder pretrained weights")
     in_channels: int = Field(default=3, ge=1, description="Number of input channels")
-    classes: int = Field(default=1, ge=1, description="Number of output classes")
+    out_channels: int = Field(default=1, ge=1, description="Number of output channels")
 
 
 class LossConfig(BaseModel):
@@ -137,24 +137,24 @@ class LoggingConfig(BaseModel):
 
 
 class ResourcesConfig(BaseModel):
-    """Configuration for resource management (SDD v4.0)."""
+    """Configuration for resource management (SDD v4.1)."""
     auto_tune: bool = Field(default=False, description="Enable auto-tuning")
     log_effective_settings: bool = Field(default=True, description="Log effective settings")
 
 
 class VisualizationConfig(BaseModel):
-    """Configuration for visualization (SDD v4.0)."""
+    """Configuration for visualization (SDD v4.1)."""
     mode: str = Field(default="simple", description="Visualization mode: simple, detailed")
     overlay_alpha: float = Field(default=0.3, ge=0.0, le=1.0, description="Overlay transparency")
     overlay_colormap: str = Field(default="viridis", description="Overlay colormap")
 
 
 class Config(BaseModel):
-    """Main configuration class with SDD v4.0 support."""
+    """Main configuration class with SDD v4.1 support."""
     project_name: str = Field(description="Project name")
     task: str = Field(default="segmentation", description="Task type: segmentation")
 
-    # SDD v4.0 specific fields
+    # SDD v4.1 specific fields
     use_fallbacks: Optional[bool] = Field(default=False, description="Use fallback implementations")
     validation_mode: Optional[str] = Field(default=None, description="Config validation mode")
 
@@ -166,7 +166,7 @@ class Config(BaseModel):
     compute: ComputeConfig = Field(default_factory=ComputeConfig, description="Compute configuration")
     logging: LoggingConfig = Field(default_factory=LoggingConfig, description="Logging configuration")
 
-    # SDD v4.0 specific configs
+    # SDD v4.1 specific configs
     resources: ResourcesConfig = Field(default_factory=ResourcesConfig, description="Resource management")
     visualization: VisualizationConfig = Field(default_factory=VisualizationConfig, description="Visualization settings")
 
@@ -181,7 +181,14 @@ class Config(BaseModel):
     @validator("model")
     def validate_model_architecture(cls, v):
         """Validate model architecture."""
-        allowed_archs = ["Unet", "UnetPlusPlus", "DeepLabV3Plus"]
+        allowed_archs = [
+            "Unet",
+            "UnetPlusPlus",
+            "DeepLabV3",
+            "DeepLabV3Plus",
+            "FPN",
+            "PSPNet",
+        ]
         if v.architecture not in allowed_archs:
             raise ValueError(f"Architecture must be one of {allowed_archs}, got {v.architecture}")
         return v

@@ -1,9 +1,9 @@
 """
-Experiment identity capture for SDD v4.0 compliance.
+Experiment identity capture for SDD v4.1 compliance.
 
 This module captures complete experiment context including git state,
 configuration hash, and environment for full reproducibility tracking.
-Implements SDD v4.0 Appendix A.3 requirements.
+Implements SDD v4.1 Appendix A.3 requirements.
 """
 
 import os
@@ -23,7 +23,7 @@ logger = get_logger(__name__)
 
 
 class ExperimentIdentity:
-    """Capture complete experiment context per SDD v4.0."""
+    """Capture complete experiment context per SDD v4.1."""
 
     @staticmethod
     def capture(config: Dict[str, Any], run_dir: Path) -> Dict[str, Any]:
