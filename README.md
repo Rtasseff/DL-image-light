@@ -2,6 +2,14 @@
 
 A production-ready deep learning platform for image segmentation using PyTorch Lightning and Segmentation Models PyTorch.
 
+## 📚 Documentation
+
+- [docs/README_STREAMLINED.md](docs/README_STREAMLINED.md) — user quick start and troubleshooting
+- [docs/GOLDEN_PATH.md](docs/GOLDEN_PATH.md) — full workflow walkthrough
+- [docs/DECISION_GUIDES/](docs/DECISION_GUIDES/) — 5-minute decision helpers
+- [docs/FOR_ENGINEERS.md](docs/FOR_ENGINEERS.md) — engineering onboarding and SDD usage
+- [docs/CONTRACTS/](docs/CONTRACTS/) — frozen interfaces and validation policies
+
 ## 🚀 Quick Start
 
 ### Installation
